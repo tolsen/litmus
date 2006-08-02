@@ -1,0 +1,54 @@
+
+litmus: WebDAV server protocol compliance test suite. Tests include:
+
+* OPTIONS for DAV: header
+* PUT, GET with byte comparison
+* MKCOL
+* DELETE (collections, non-collections)
+* COPY, MOVE using combinations of:
+ - overwrite t/f
+ - destination exists/doesn't exist
+ - collection/non-collection
+* Property manipulation and querying:
+ - set, delete, replace properties
+ - persist dead props across COPY
+ - namespace handling
+* Locking
+ - attempts to modify locked resource (as lock owner, not owner)
+ - shared/exclusive locks, lock discovery
+
+litmus comprises of a set of test suites as separate executables: each
+program takes a URL on the command-line, optionally followed by
+username and password.  To run all the suites from a built litmus
+tree, use
+
+   make URL=http://dav.server.url/path/ check
+
+Where http://dav.server.url/path/ is a DAV-enabled collection.  litmus
+must be able to create a new collection called 'litmus' at that
+location.  The Makefile variable 'CREDS' can also be defined to be a
+username/password separated by strings.  e.g. if you have a user 'jim'
+defined with password '2518', use:
+
+  make URL=http://dav.server.url/path/ CREDS="jim 2518" check
+
+To aid debugging, litmus adds a header `X-Litmus-One' to every request
+made.  After running a test suite, the file 'debug.log' includes a
+full neon debugging trace (unless neon or litmus was configured
+without debugging enabled!).
+
+To use after installation is complete ('make install'), run the
+'litmus' script, passing in a URL, optionally followed by the
+username/password.  For instance:
+
+     litmus http://dav.server.url/path/
+ or  litmus http://dav.server.url/path/ jim 2518
+
+litmus is licensed under the GNU GPL; see COPYING for full details.
+litmus is (C) 2001-2005 Joe Orton
+
+neon is licensed under the GNU LGPL; see libneon/COPYING.LIB for details.
+neon is (C) 1999-2005 Joe Orton and others.
+
+Please send bug reports, feature requests, etc. in to the neon mailing
+list at litmus@webdav.org.

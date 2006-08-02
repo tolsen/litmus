@@ -1,0 +1,114 @@
+Changes in version 0.10.5:
+* Add another test for handling of unknown state tokens in an If: header.
+* Update to neon 0.25.4.
+
+Changes in version 0.10.4:
+* Fix possible crashes in lock discovery.
+* Update to neon 0.25.3.
+
+Changes in version 0.10.3:
+* Fix VPATH builds (Mike Castle).
+* Fix build with bundled expat.
+* Update to neon 0.25.2.
+
+Changes in version 0.10.2:
+* Fix build on Mac OS X.
+* Fixes for the "largefile" test suite.
+
+Changes in version 0.10.1:
+* Add check for DELETE safety with #fragment in Request-URI.
+
+Changes in version 0.10:
+* Add some basic collection locking tests.
+* Correct fail_complex_cond_put to really send an invalid etag as intended,
+ thanks to Tod Sambar.
+* Describe the conditional PUT tests in the FAQ.
+* Add test for PROPFIND <propfind> extensibility rules in request body.
+* Skip the 'expect100' in the 'http' suite for an SSL session.
+
+Changes in version 0.9.4:
+* Correct fix for comparison of absolute URIs in PROPFIND responses, 
+ thanks to Thomas Kemmer.
+
+Changes in version 0.9.3:
+* Fix some segfaults when some lock tests fail (thanks to Thomas Kemmer).
+* Fix comparison of hrefs in PROPFIND responses containing absolute https URI.
+* Run conditional PUT tests against exclusive-locked resource.
+
+Changes in version 0.9.2:
+* Fix build when configured without SSL support.
+* Fix build on FreeBSD.
+
+Changes in version 0.9.1:
+* Fix build with bundled copy of expat.
+* Tweaks to conditional PUT tests (Julian Reschke).
+
+Changes in version 0.9:
+* New tests submitted by Julian Reschke <julian.reschke@gmx.de>:
+ - check handling of high Unicode values in property values
+ - check handling of resource URIs including non-ASCII characters
+* Implement Julian's conditional PUT tests, testing If: headers with
+ various combinations of lock-tokens and etags.
+* Add test for Apache 2.0 namespace handling bug #14969.
+* Fix use of proxy with non-default port.
+
+Changes in version 0.8:
+* Persistent connections are enabled by default.
+* Updated to neon 0.23.0:
+ - many SSL fixes and improvements
+ - IPv6 support when getaddrinfo() is detected
+
+Changes in version 0.7:
+* Updated to neon 0.20.0:
+ - better handling of LOCK responses for shared locks; use the lock token
+ from the Lock-Token header (not really in 0.6 as claimed).
+
+Changes in version 0.6.1:
+* Better chance of compiling on cygwin.
+
+Changes in version 0.6:
+* Fixes for cygwin (thanks to Julian Reschke).
+* Improved failure messages.
+* If a LOCK fails, dependant tests will be skipped.
+* Add documentation to 'FAQ' on some of the tests which failed with
+ mod_dav 1.0.2.
+* Upgrade to neon 0.20.0-dev:
+ - RFC2518 compliance fix: use absoluteURIs in If: headers
+
+Changes in version 0.5:
+* Fix authentication.
+* Add support for proxy servers using `--proxy=hostname:port' option.
+ - from build tree, use "make OPTS="--proxy=hostname:port" URL="..." check
+* Add -k/--keep-going option to 'litmus' script, to have testing
+ continue even after a test program fails.
+
+Changes in version 0.4:
+* Renamed project from "neon-interop" to "litmus".
+* Greatly improved error messages for test failures throughout.
+* Add locking tests (portions from Chris Sharp <csharp@apple.com>):
+ - modifying a locked resource as and not as lock owner
+ - shared and exclusive locks, lock discovery
+ - lock doesn't follow COPY
+* Tests are run in a new, empty collection: eliminate problems caused
+ by left-over files from previous failed runs.
+* Add tests for MKCOL on plain resource, with strange body.
+* Each request will have a request header 'X-Litmus' giving the test
+ number and description, to aid debugging using network trace tools.
+* Tests separated into several executables.  Can easily run a subset of
+ tests now using e.g. 'make TESTS=locks URL=http://blah/ check'
+* Add 'litmus' wrapper script and 'make install' target.
+* Based on neon 0.18: brings portability fixes, etc.
+
+Changes in version 0.3:
+* Add tests for "empty namespace" bugs found in mod_dav by Julian Reschke.
+* Add tests for properties in many namespaces.
+
+Changes in version 0.2:
+* Catch up with neon 0.17 test framework, beautify output.
+
+Changes in version 0.1:
+* Added check for "Expect: 100-continue" support.
+
+Changes in version 0.0:
+* Initial version used at the WebDAV Interoperability Event in
+  UC Santa Cruz, July 19-20th 2001.

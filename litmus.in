@@ -1,0 +1,58 @@
+#!/bin/sh
+# Copyright (c) 2001-2005 Joe Orton <litmus@webdav.org>
+
+prefix=@prefix@
+exec_prefix=@prefix@
+libexecdir=@libexecdir@
+datadir=@datadir@
+
+HTDOCS=${HTDOCS-"@datadir@/litmus/htdocs"}
+TESTROOT=${TESTROOT-"@libexecdir@/litmus"}
+TESTS=${TESTS-"@TESTS@"}
+
+usage() {
+    cat <<EOF
+litmus: Usage: $0 [OPTIONS] URL [USERNAME PASSWORD]
+
+Options:
+ -k, --keep-going  carry on testing even if one suite fails
+ -p, --proxy=URL   use given proxy server URL
+
+Significant environment variables:
+
+    \$TESTS     - specify test programs to run
+        default: "@TESTS@"
+    \$HTDOCS    - specify alternate document root
+        default: @datadir@/litmus/htdocs
+    \$TESTROOT  - specify alternate program directory
+        default: @libexecdir@/litmus
+
+Feedback to <litmus@webdav.org>.
+EOF
+    exit 1
+}
+
+nofail=0
+
+case $1 in
+--help|-h) usage ;;
+--keep-going|-k) nofail=1; shift ;;
+--version) echo litmus @PACKAGE_VERSION@; exit 0 ;;
+esac
+
+test "$#" = "0" && usage
+
+for t in $TESTS; do
+    tprog="${TESTROOT}/${t}"
+    if test -x ${tprog}; then
+	if ${tprog} --htdocs ${HTDOCS} "$@"; then
+	    : pass
+	elif test $nofail -eq 0; then
+	    echo "See debug.log for network/debug traces."
+	    exit 1
+	fi
+    else
+	echo "ERROR: Could not find ${tprog}"
+	exit 1
+    fi
+done

@@ -1,0 +1,76 @@
+
+* Why does the move_coll test fail on test.webdav.org?
+
+At time of writing, test.webdav.org is running an old version of
+mod_dav which has a few bugs.  mod_dav 1.0.3 passes all litmus tests.
+
+* What does the "propfind_invalid2" test check for?
+
+This was a bug found in mod_dav 1.0.2 by Julian Reschke.
+
+If a request was sent with an XML body which included an empty
+namespace prefix declaration (xmlns:ns1=""), then the server must
+reject that with a "400 Bad Request" response, as it is invalid
+according to the XML Namespace specification:
+
+http://www.w3.org/TR/REC-xml-names#dt-prefix
+
+* What does the "propnullns" test check for?
+
+This was a bug found in mod_dav 1.0.2 by Julian Reschke.
+
+If a property was created which had a name with an empty namespace,
+then mod_dav would produce a PROPFIND response for that property which
+itself included an invalid empty namespace prefix declaration.  The
+"propnullns" test checks for this, simply by setting a property with
+an empty namespace, and retrieving it again.
+
+* How do I use litmus with a proxy server?
+
+For instance, using an HTTP proxy called "foobar" on port 8080, use:
+
+  $ litmus --proxy=foobar:8080 http://server/dav/
+
+* How do I use litmus with an SSL server?
+
+Just pass in the appropriate https:// URL, for instance:
+
+  $ litmus https://server/dav/
+
+* What do the cond_put tests do?
+
+Here are brief descriptions of the conditional PUT tests: these tests
+send conditional PUT requests against an exclusive-locked resource;
+conditions using the If header, see RFC2518 section 9.4.
+
+1. cond_put: a PUT conditional on the resource state having the known
+etag and lock token; should succeed.
+
+2. fail_cond_put: a PUT conditional on the resource having the known
+etag and the lock token "DAV:nolock"; since this is an invalid
+lock-token, the PUT should fail.
+
+3. cond_put_with_not: a PUT including a binary conditional:
+  If: (<real-lock-token>) (Not <DAV:no-lock>)
+since the first part of the condition should be true (the real
+lock token), and the second part is (Not false) == true,
+the PUT should succeed.
+
+4. cond_put_corrupt_token: a PUT conditional including an If
+header with a *corrupt* etag; this should not match the resource
+state so the request should fail.
+
+5. complex_cond_put: a complex conditional as follows:
+
+  If: <(real-lock-token) [real-etag]) (Not <DAV:no-lock> [real-etag])
+
+the first half of the condition should be true; as tested in
+cond_put_with_not, the second half should also be true; so the
+condition should be met and the PUT should succeed.
+
+6. fail_complex_cond_put: a complex conditional as follows:
+
+  If: <(real-lock-token) [corrupt-etag]) (Not <DAV:no-lock> [real-etag])
+
+the first half of the condition should be false, so the condition as
+a whole should be false, so the PUT should fail with a 412 result.

@@ -1,0 +1,9 @@
+
+Bugs from Keith/Julian:
+- PROPPATCH response may be 207 with embedded 423, lock tests
+check for 423 directly.  Extend PROPPATCH interface to return
+true ne_status structures for each operation?
+
+Features:
+* add collection locking tests. 
+* add lock-null tests.

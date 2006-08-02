@@ -1,0 +1,170 @@
+------------------------------------------------------------------------
+r752 | joe | 2005-11-02 20:44:33 +0000 (Wed, 02 Nov 2005) | 1 line
+
+Tag release 0.10.5.
+------------------------------------------------------------------------
+r751 | joe | 2005-11-02 20:43:44 +0000 (Wed, 02 Nov 2005) | 2 lines
+
+Bump for 0.10.5.
+
+------------------------------------------------------------------------
+r745 | joe | 2005-10-28 15:54:13 +0100 (Fri, 28 Oct 2005) | 3 lines
+
+* src/largefile.c (large_put): Check response code.
+(large_get): Fail if ne_read_response_block returns an error.
+
+------------------------------------------------------------------------
+r744 | joe | 2005-10-28 12:49:43 +0100 (Fri, 28 Oct 2005) | 2 lines
+
+* src/largefile.c (large_get): Fail for non-2xx responses.
+
+------------------------------------------------------------------------
+r743 | joe | 2005-10-28 12:38:05 +0100 (Fri, 28 Oct 2005) | 3 lines
+
+* src/locks.c (fail_cond_put_unlocked): Add another test for handling
+of unknown state tokens as per Julian's locking tests.
+
+------------------------------------------------------------------------
+r703 | joe | 2005-09-17 10:19:29 +0100 (Sat, 17 Sep 2005) | 3 lines
+
+* src/locks.c (verify_discover): Thou really shalt not commit
+debugging code.
+
+------------------------------------------------------------------------
+r701 | joe | 2005-09-17 10:12:04 +0100 (Sat, 17 Sep 2005) | 2 lines
+
+Bump to 0.10.4.
+
+------------------------------------------------------------------------
+r699 | joe | 2005-09-17 10:09:13 +0100 (Sat, 17 Sep 2005) | 4 lines
+
+* src/locks.c (compare_locks): New function.
+(verify_discover): Use it; fix crashes if owner or token 
+is NULL in expected or actual lock.
+
+------------------------------------------------------------------------
+r682 | joe | 2005-08-20 09:37:17 +0100 (Sat, 20 Aug 2005) | 2 lines
+
+Use test/common from neon 0.25.x branch.
+
+------------------------------------------------------------------------
+r676 | joe | 2005-08-17 21:09:45 +0100 (Wed, 17 Aug 2005) | 2 lines
+
+* NEWS: Add news for 0.10.3.
+
+------------------------------------------------------------------------
+r675 | joe | 2005-08-17 21:08:59 +0100 (Wed, 17 Aug 2005) | 2 lines
+
+* src/basic.c (create_temp, do_put_get): Add some error checking.
+
+------------------------------------------------------------------------
+r674 | joe | 2005-08-17 21:06:10 +0100 (Wed, 17 Aug 2005) | 3 lines
+
+* configure.ac: Unbump version since it was bumped once already since
+the last release.
+
+------------------------------------------------------------------------
+r673 | joe | 2005-08-17 21:03:23 +0100 (Wed, 17 Aug 2005) | 2 lines
+
+* configure.ac: Fix build with bundled expat.  Bump to 0.10.4.
+
+------------------------------------------------------------------------
+r607 | joe | 2005-04-24 21:42:42 +0100 (Sun, 24 Apr 2005) | 3 lines
+
+* Makefile.in (install): Fix installation for VPATH builds (Mike
+Castle).
+
+------------------------------------------------------------------------
+r606 | joe | 2005-04-24 21:41:53 +0100 (Sun, 24 Apr 2005) | 2 lines
+
+- use neon 0.25.x branch for externals
+
+------------------------------------------------------------------------
+r605 | joe | 2005-04-24 21:41:15 +0100 (Sun, 24 Apr 2005) | 2 lines
+
+* configure.ac: Adapt for neon 0.25.
+
+------------------------------------------------------------------------
+r535 | joe | 2005-03-29 20:56:26 +0100 (Tue, 29 Mar 2005) | 4 lines
+
+* configure.ac: Bump for 0.10.2 release.
+
+* README: Update copyright.
+
+------------------------------------------------------------------------
+r514 | joe | 2005-03-02 15:02:25 +0000 (Wed, 02 Mar 2005) | 2 lines
+
+* src/http.c: Define EOL now neon doesn't.
+
+------------------------------------------------------------------------
+r487 | joe | 2005-02-24 14:37:06 +0000 (Thu, 24 Feb 2005) | 1 line
+
+Rename ChangeLog to ChangeLog.CVS.
+------------------------------------------------------------------------
+r486 | joe | 2005-02-24 14:36:28 +0000 (Thu, 24 Feb 2005) | 2 lines
+
+* Makefile.in (distclean, clean): Clean more.
+
+------------------------------------------------------------------------
+r485 | joe | 2005-02-24 14:24:03 +0000 (Thu, 24 Feb 2005) | 3 lines
+
+* src/largefile.c (init_largefile): Upload dummy file once to prep
+auth if necessary; don't disable persistent connections.
+
+------------------------------------------------------------------------
+r484 | joe | 2005-02-24 14:16:32 +0000 (Thu, 24 Feb 2005) | 7 lines
+
+Test that the entity returned by GET matches the entity stored by PUT
+in the largefile tests:
+
+* src/largefile.c (large_get): New test.
+
+* configure.ac: Check how to print long long.
+
+------------------------------------------------------------------------
+r482 | joe | 2005-02-23 16:59:09 +0000 (Wed, 23 Feb 2005) | 2 lines
+
+* src/largefile.c (provider): Fix to really increment the counter.
+
+------------------------------------------------------------------------
+r416 | joe | 2005-01-07 15:32:29 +0000 (Fri, 07 Jan 2005) | 3 lines
+
+* litmus.in: Support --version, advertise mailing list address in
+--help.
+
+------------------------------------------------------------------------
+r415 | joe | 2005-01-07 15:25:22 +0000 (Fri, 07 Jan 2005) | 2 lines
+
+* src/common.c (get_etag): Fix use-after-free.
+
+------------------------------------------------------------------------
+r408 | joe | 2005-01-06 13:40:05 +0000 (Thu, 06 Jan 2005) | 2 lines
+
+* src/common.c (get_etag): Update for neon 0.25 response-header API.
+
+------------------------------------------------------------------------
+r340 | joe | 2004-10-30 12:43:06 +0100 (Sat, 30 Oct 2004) | 2 lines
+
+* src/common.c: Include sys/stat.h
+
+------------------------------------------------------------------------
+r338 | joe | 2004-10-30 12:37:20 +0100 (Sat, 30 Oct 2004) | 7 lines
+
+* lib/neon: Move neon/src external here from "libneon" which might
+help stop people calling neon "libneon".
+
+* lib/expat: Import from cadaver/trunk/lib/expat.
+
+* Makefile.in, configure.in: Adapt for new externals locations.
+
+------------------------------------------------------------------------
+r278 | joe | 2004-10-04 22:57:34 +0100 (Mon, 04 Oct 2004) | 3 lines
+
+Set svn:externals to pick up libneon, macros and test-common directories from
+the neon trunk.
+
+------------------------------------------------------------------------
+r277 | joe | 2004-10-04 22:53:13 +0100 (Mon, 04 Oct 2004) | 1 line
+
+Import litmus HEAD.
+------------------------------------------------------------------------
