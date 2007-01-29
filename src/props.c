@@ -1,6 +1,6 @@
 /* 
    litmus: DAV server test suite
-   Copyright (C) 2001-2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2006, Joe Orton <joe@manyfish.co.uk>
                                                                      
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -60,10 +60,17 @@ struct results {
     int result;
 };
 
+#ifdef HAVE_NEON_026PLUS
+static void d0_results(void *userdata, const ne_uri *uri,
+		       const ne_prop_result_set *rset)
+#else
 static void d0_results(void *userdata, const char *uri,
 		       const ne_prop_result_set *rset)
+#endif
 {
     struct results *r = userdata;
+    const char *path;
+#ifndef HAVE_NEON_026PLUS
     const char *scheme;
     size_t slen;
 
@@ -73,14 +80,17 @@ static void d0_results(void *userdata, const char *uri,
     if (strncmp(uri, scheme, slen) == 0 &&
         strncmp(uri+slen, "://", 3) == 0) {
 	/* Absolute URI */
-	uri = strchr(uri+slen+3, '/');
-	if (uri == NULL) {
+	path = strchr(uri+slen+3, '/');
+	if (path == NULL) {
 	    NE_DEBUG(NE_DBG_HTTP, "Invalid URI???");
 	    return;
 	}
     }
+#else
+    path = uri->path;
+#endif
 
-    if (ne_path_compare(uri, i_path)) {
+    if (ne_path_compare(path, i_path)) {
 	t_warning("response href for wrong resource");
     } else {
 	struct private *priv = ne_propset_private(rset);
@@ -94,10 +104,23 @@ static void d0_results(void *userdata, const char *uri,
     }
 }
 
+#ifdef HAVE_NEON_026PLUS
+static void *create_private(void *userdata, const ne_uri *uri)
+{
+    return ne_calloc(sizeof(struct private));
+}
+
+static void destroy_private(void *userdata, void *private)
+{
+    ne_free(private);
+}
+
+#else
 static void *create_private(void *userdata, const char *uri)
 {
     return ne_calloc(sizeof(struct private));
 }
+#endif
 
 static int startelm(void *ud, int parent, const char *nspace,
                     const char *name, const char **atts)
@@ -121,7 +144,11 @@ static int propfind_d0(void)
 
     r.ph = ne_propfind_create(i_session, i_path, NE_DEPTH_ZERO);
     
-    ne_propfind_set_private(r.ph, create_private, NULL);
+    ne_propfind_set_private(r.ph, create_private, 
+#ifdef HAVE_NEON_026PLUS
+                            destroy_private,
+#endif
+                            NULL);
 
     r.result = FAIL;
     t_context("No responses returned");
@@ -233,8 +260,13 @@ static int propset(void)
     return OK;
 }
 
+#ifdef HAVE_NEON_026PLUS
+static void pg_results(void *userdata, const ne_uri *uri,
+		       const ne_prop_result_set *rset)
+#else
 static void pg_results(void *userdata, const char *uri,
 		       const ne_prop_result_set *rset)
+#endif
 {
     struct results *r = userdata;
     const char *value;
@@ -441,6 +473,49 @@ static int prophighunicode(void)
     return OK;
 }
 
+/* Test whether PROPPATCH is processed in document order (1/2). */
+static int propremoveset(void)
+{
+    PRECOND(prop_ok);
+
+    numprops = 1;
+    removedprops = 0;
+
+    propnames[0].nspace = NS;
+    propnames[0].name = "removeset";
+    values[0] = "y";
+ 
+    CALL(do_patch("PROPPATCH remove then set",
+		  XML_DECL "<propertyupdate xmlns='DAV:'>"
+      "<remove><prop><removeset xmlns='" NS "'/></prop></remove>"
+      "<set><prop><removeset xmlns='" NS "'>x</removeset></prop></set>"
+      "<set><prop><removeset xmlns='" NS "'>y</removeset></prop></set>"
+      "</propertyupdate>"));
+
+    return OK;
+}
+
+/* Test whether PROPPATCH is processed in document order (2/2). */
+static int propsetremove(void)
+{
+    PRECOND(prop_ok);
+
+    numprops = 1;
+    removedprops = 0;
+
+    propnames[0].nspace = NS;
+    propnames[0].name = "removeset";
+    values[0] = NULL;
+ 
+    CALL(do_patch("PROPPATCH remove then set",
+		  XML_DECL "<propertyupdate xmlns='DAV:'>"
+      "<set><prop><removeset xmlns='" NS "'>x</removeset></prop></set>"
+      "<remove><prop><removeset xmlns='" NS "'/></prop></remove>"
+      "</propertyupdate>"));
+
+    return OK;
+}
+
 /* regression test for Apache bug #15728. */
 static int propvalnspace(void)
 {
@@ -529,6 +604,8 @@ ne_test tests[] =
     T(propreplace), T(propget),
     T(propnullns), T(propget),
     T(prophighunicode), T(propget),
+    T(propremoveset), T(propget),
+    T(propsetremove), T(propget),
     T(propvalnspace), T(propwformed),
     
     T(propinit),

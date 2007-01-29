@@ -1,6 +1,6 @@
 /* 
    Stupidly simple test framework
-   Copyright (C) 2001-2002, 2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2002, 2004, 2005, Joe Orton <joe@manyfish.co.uk>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -40,10 +40,14 @@
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
+#ifdef HAVE_LOCALE_H
+#include <locale.h>
+#endif
 
 #include "ne_string.h"
 #include "ne_utils.h"
 #include "ne_socket.h"
+#include "ne_i18n.h"
 
 #include "tests.h"
 #include "child.h"
@@ -98,7 +102,8 @@ void t_warning(const char *str, ...)
 
 #define TEST_DEBUG \
 (NE_DBG_HTTP | NE_DBG_SOCKET | NE_DBG_HTTPBODY | NE_DBG_HTTPAUTH | \
- NE_DBG_LOCKS | NE_DBG_XMLPARSE | NE_DBG_XML | NE_DBG_SSL)
+ NE_DBG_LOCKS | NE_DBG_XMLPARSE | NE_DBG_XML | NE_DBG_SSL | \
+ NE_DBG_HTTPPLAIN)
 
 #define W(m) do { if (write(0, m, strlen(m)) < 0) exit(99); } while(0)
 
@@ -150,6 +155,14 @@ int main(int argc, char *argv[])
     } else {
 	test_suite++;
     }
+
+#ifdef HAVE_SETLOCALE
+    setlocale(LC_MESSAGES, "");
+#endif
+
+#if NE_VERSION_MAJOR > 0 || NE_VERSION_MINOR > 25
+    ne_i18n_init(NULL);
+#endif
 
 #if defined(HAVE_ISATTY) && defined(STDOUT_FILENO)
     if (isatty(STDOUT_FILENO)) {

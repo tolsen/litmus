@@ -1,6 +1,6 @@
 /* 
    HTTP session handling
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -29,7 +29,7 @@
 #include "ne_defs.h"
 #include "ne_socket.h"
 
-BEGIN_NEON_DECLS
+NE_BEGIN_DECLS
 
 typedef struct ne_session_s ne_session;
 
@@ -50,9 +50,26 @@ void ne_close_connection(ne_session *sess);
 void ne_session_proxy(ne_session *sess,
 		      const char *hostname, unsigned int port);
 
-/* Disable use of persistent connection if 'flag' is non-zero, else
- * enable (the default). */
-void ne_set_persist(ne_session *sess, int flag);
+/* Defined session flags: */
+typedef enum ne_session_flag_e {
+    NE_SESSFLAG_PERSIST = 0, /* disable this flag to prevent use of
+                              * persistent connections. */
+
+    NE_SESSFLAG_ICYPROTO, /* enable this flag to enable support for
+                           * non-HTTP ShoutCast-style "ICY" responses. */
+
+    NE_SESSFLAG_SSLv2, /* disable this flag to disable support for
+                        * SSLv2, if supported by the SSL library. */
+
+    NE_SESSFLAG_LAST /* enum sentinel value */
+} ne_session_flag;
+
+/* Set a new value for a particular session flag. */
+void ne_set_session_flag(ne_session *sess, ne_session_flag flag, int value);
+
+/* Return 0 if the given flag is not set, >0 it is set, or -1 if the
+ * flag is not supported. */
+int ne_get_session_flag(ne_session *sess, ne_session_flag flag);
 
 /* Bypass the normal name resolution; force the use of specific set of
  * addresses for this session, addrs[0]...addrs[n-1].  The addrs array
@@ -122,11 +139,13 @@ typedef int (*ne_ssl_verify_fn)(void *userdata, int failures,
 void ne_ssl_set_verify(ne_session *sess, ne_ssl_verify_fn fn, void *userdata);
 
 /* Use the given client certificate for the session.  The client cert
- * MUST be in the decrypted state, otherwise behaviour is undefined. */
+ * MUST be in the decrypted state, otherwise behaviour is undefined.
+ * The 'clicert' object is duplicated internally so can be destroyed
+ * by the caller.  */
 void ne_ssl_set_clicert(ne_session *sess, const ne_ssl_client_cert *clicert);
 
-/* Indicate that the certificate 'cert' is trusted; 'cert' is
- * duplicated internally and may be destroyed at will. */
+/* Indicate that the certificate 'cert' is trusted; the 'cert' object
+ * is duplicated internally so can be destroyed by the caller. */
 void ne_ssl_trust_cert(ne_session *sess, const ne_ssl_certificate *cert);
 
 /* If the SSL library provided a default set of CA certificates, trust
@@ -184,6 +203,6 @@ void ne_set_error(ne_session *sess, const char *format, ...)
 /* Retrieve the error string for the session */
 const char *ne_get_error(ne_session *sess);
 
-END_NEON_DECLS
+NE_END_DECLS
 
 #endif /* NE_SESSION_H */

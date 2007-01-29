@@ -96,4 +96,8 @@ char *get_etag(const char *path);
 #define GETSTATUS2 (atoi(ne_get_error((i_session2))))
 #define STATUS2(code) (GETSTATUS2 != (code))
 
+#if NE_VERSION_MAJOR > 0 || NE_VERSION_MINOR > 25
+#define HAVE_NEON_026PLUS /* at least neon 0.26.x. */
+#endif
+
 #endif /* INTEROP_H */

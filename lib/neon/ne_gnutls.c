@@ -1,6 +1,6 @@
 /*
    neon SSL/TLS support using GNU TLS
-   Copyright (C) 2002-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2002-2006, Joe Orton <joe@manyfish.co.uk>
    Copyright (C) 2004, Aleix Conchillo Flaque <aleix@member.fsf.org>
 
    This library is free software; you can redistribute it and/or
@@ -37,10 +37,17 @@
 #include <gnutls/gnutls.h>
 #include <gnutls/pkcs12.h>
 
+#ifdef NE_HAVE_TS_SSL
+#include <errno.h>
+#include <pthread.h>
+#include <gcrypt.h>
+GCRY_THREAD_OPTION_PTHREAD_IMPL;
+#endif
+
 #include "ne_ssl.h"
 #include "ne_string.h"
 #include "ne_session.h"
-#include "ne_i18n.h"
+#include "ne_internal.h"
 
 #include "ne_private.h"
 #include "ne_privssl.h"
@@ -114,13 +121,9 @@ static void append_rdn(ne_buffer *buf, gnutls_x509_crt x5, int subject, const ch
     }
 }
 
-
 char *ne_ssl_readable_dname(const ne_ssl_dname *name)
 {
     ne_buffer *buf = ne_buffer_create();
-#if 0
-    /* this code can be used once there is a released version of GnuTLS
-     * with fixed _get_dn_oid functions */
     int ret, idx = 0;
 
     do {
@@ -136,29 +139,34 @@ char *ne_ssl_readable_dname(const ne_ssl_dname *name)
             idx++;
         }
     } while (ret != GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE);
-#else
-
-#define APPEND_RDN(x) append_rdn(buf, name->cert, name->subject, GNUTLS_OID_##x)
-
-    APPEND_RDN(X520_ORGANIZATIONAL_UNIT_NAME);
-    APPEND_RDN(X520_ORGANIZATION_NAME);
-    APPEND_RDN(X520_LOCALITY_NAME);
-    APPEND_RDN(X520_STATE_OR_PROVINCE_NAME);
-    APPEND_RDN(X520_COUNTRY_NAME);
-
-    if (buf->used == 1) APPEND_RDN(X520_COMMON_NAME);
-    if (buf->used == 1) APPEND_RDN(PKCS9_EMAIL);
-
-#undef APPEND_RDN
-#endif
 
     return ne_buffer_finish(buf);
 }
 
 int ne_ssl_dname_cmp(const ne_ssl_dname *dn1, const ne_ssl_dname *dn2)
 {
-#warning incomplete
-    return 1;
+    char c1[1024], c2[1024];
+    size_t s1 = sizeof c1, s2 = sizeof c2;
+    int ret;
+
+    if (dn1->subject)
+        ret = gnutls_x509_crt_get_dn(dn1->cert, c1, &s1);
+    else
+        ret = gnutls_x509_crt_get_issuer_dn(dn1->cert, c1, &s1);
+    if (ret)
+        return 1;
+
+    if (dn2->subject)
+        ret = gnutls_x509_crt_get_dn(dn2->cert, c2, &s2);
+    else
+        ret = gnutls_x509_crt_get_issuer_dn(dn2->cert, c2, &s2);
+    if (ret)
+        return -1;
+    
+    if (s1 != s2)
+        return s2 - s1;
+
+    return memcmp(c1, c2, s1);
 }
 
 void ne_ssl_clicert_free(ne_ssl_client_cert *cc)
@@ -174,17 +182,14 @@ void ne_ssl_clicert_free(ne_ssl_client_cert *cc)
     ne_free(cc);
 }
 
-void ne_ssl_cert_validity(const ne_ssl_certificate *cert,
-                          char *from, char *until)
+void ne_ssl_cert_validity_time(const ne_ssl_certificate *cert,
+                               time_t *from, time_t *until)
 {
-#warning FIXME strftime not portable
     if (from) {
-        time_t t = gnutls_x509_crt_get_activation_time(cert->subject);
-        strftime(from, NE_SSL_VDATELEN, "%b %d %H:%M:%S %Y %Z", localtime(&t));
+        *from = gnutls_x509_crt_get_activation_time(cert->subject);
     }
     if (until) {
-        time_t t = gnutls_x509_crt_get_expiration_time(cert->subject);
-        strftime(until, NE_SSL_VDATELEN, "%b %d %H:%M:%S %Y %Z", localtime(&t));
+        *until = gnutls_x509_crt_get_expiration_time(cert->subject);
     }
 }
 
@@ -207,7 +212,7 @@ static int match_hostname(char *cn, const char *hostname)
 	hostname = dot + 1;
 	cn += 2;
     }
-    return !strcasecmp(cn, hostname);
+    return !ne_strcasecmp(cn, hostname);
 }
 
 /* Check certificate identity.  Returns zero if identity matches; 1 if
@@ -234,6 +239,28 @@ static int check_identity(const char *hostname, gnutls_x509_crt cert,
             match = match_hostname(name, hostname);
             found = 1;
             break;
+        case GNUTLS_SAN_IPADDRESS: {
+            ne_inet_addr *ia;
+            if (len == 4)
+                ia = ne_iaddr_make(ne_iaddr_ipv4, (unsigned char *)name);
+            else if (len == 16)
+                ia = ne_iaddr_make(ne_iaddr_ipv6, (unsigned char *)name);
+            else 
+                ia = NULL;
+            if (ia) {
+                char buf[128];
+                
+                match = strcmp(hostname, 
+                               ne_iaddr_print(ia, buf, sizeof buf)) == 0;
+                if (identity) *identity = ne_strdup(buf);
+                found = 1;
+                ne_iaddr_free(ia);
+            } else {
+                NE_DEBUG(NE_DBG_SSL, "iPAddress name with unsupported "
+                         "address type (length %" NE_FMT_SIZE_T "), skipped.\n",
+                         len);
+            }
+        } break;
         default:
             break;
         }
@@ -286,7 +313,7 @@ static gnutls_x509_crt x509_crt_copy(gnutls_x509_crt src)
     gnutls_datum tmp;
     gnutls_x509_crt dest;
     
-    if (gnutls_x509_crt_init(&dest) == 0) {
+    if (gnutls_x509_crt_init(&dest) != 0) {
         return NULL;
     }
 
@@ -341,6 +368,49 @@ dup_error:
     return NULL;
 }    
 
+/* Callback invoked when the SSL server requests a client certificate.  */
+static int provide_client_cert(gnutls_session session,
+                               const gnutls_datum *req_ca_rdn, int nreqs,
+                               const gnutls_pk_algorithm *sign_algos,
+                               int sign_algos_length, gnutls_retr_st *st)
+{
+    ne_session *sess = gnutls_session_get_ptr(session);
+    
+    if (!sess) {
+        return -1;
+    }
+
+    if (!sess->client_cert && sess->ssl_provide_fn) {
+        /* The dname array cannot be converted without better dname
+         * support from GNUTLS. */
+        sess->ssl_provide_fn(sess->ssl_provide_ud, sess,
+                             NULL, 0);
+    }
+
+    NE_DEBUG(NE_DBG_SSL, "In client cert provider callback.\n");
+
+    if (sess->client_cert) {
+        gnutls_certificate_type type = gnutls_certificate_type_get(session);
+        if (type == GNUTLS_CRT_X509) {
+            NE_DEBUG(NE_DBG_SSL, "Supplying client certificate.\n");
+
+            st->type = type;
+            st->ncerts = 1;
+            st->cert.x509 = &sess->client_cert->cert.subject;
+            st->key.x509 = sess->client_cert->pkey;
+            
+            /* tell GNU TLS not to deallocate the certs. */
+            st->deinit_all = 0;
+        } else {
+            return -1;
+        }
+    } else {
+        NE_DEBUG(NE_DBG_SSL, "No client certificate supplied.\n");
+    }
+
+    return 0;
+}
+
 void ne_ssl_set_clicert(ne_session *sess, const ne_ssl_client_cert *cc)
 {
     sess->client_cert = dup_client_cert(cc);
@@ -348,8 +418,12 @@ void ne_ssl_set_clicert(ne_session *sess, const ne_ssl_client_cert *cc)
 
 ne_ssl_context *ne_ssl_context_create(int flags)
 {
-    ne_ssl_context *ctx = ne_malloc(sizeof *ctx);
+    ne_ssl_context *ctx = ne_calloc(sizeof *ctx);
     gnutls_certificate_allocate_credentials(&ctx->cred);
+    if (flags == NE_SSL_CTX_CLIENT) {
+        gnutls_certificate_client_set_retrieve_function(ctx->cred,
+                                                        provide_client_cert);
+    }
     return ctx;
 }
 
@@ -364,18 +438,31 @@ int ne_ssl_context_keypair(ne_ssl_context *ctx,
 int ne_ssl_context_set_verify(ne_ssl_context *ctx, int required,
                               const char *ca_names, const char *verify_cas)
 {
+    ctx->verify = required;
     if (verify_cas) {
         gnutls_certificate_set_x509_trust_file(ctx->cred, verify_cas,
                                                GNUTLS_X509_FMT_PEM);
     }
-#warning argh
+    /* gnutls_certificate_send_x509_rdn_sequence in gnutls >= 1.2 can
+     * be used to *suppress* sending the CA names, but not control it,
+     * it seems. */
     return 0;
 }
 
+void ne_ssl_context_set_flag(ne_ssl_context *ctx, int flag, int value)
+{
+    /* SSLv2 not supported. */
+}
 
 void ne_ssl_context_destroy(ne_ssl_context *ctx)
 {
     gnutls_certificate_free_credentials(ctx->cred);
+    if (ctx->cache.client.data) {
+        ne_free(ctx->cache.client.data);
+    } else if (ctx->cache.server.key.data) {
+        gnutls_free(ctx->cache.server.key.data);
+        gnutls_free(ctx->cache.server.data.data);
+    }    
     ne_free(ctx);
 }
 
@@ -392,16 +479,16 @@ static ne_ssl_certificate *make_peers_chain(gnutls_session sock)
     }
     
     for (n = 0; n < count; n++) {
-        ne_ssl_certificate *cert = ne_malloc(sizeof *cert);
+        ne_ssl_certificate *cert;
         gnutls_x509_crt x5;
 
         if (gnutls_x509_crt_init(&x5) ||
             gnutls_x509_crt_import(x5, &certs[n], GNUTLS_X509_FMT_DER)) {
-            /* leak! */
+            ne_ssl_cert_free(top);
             return NULL;
         }
 
-        populate_cert(cert, x5);
+        cert = populate_cert(ne_malloc(sizeof *cert), x5);
         
         if (top == NULL) {
             current = top = cert;
@@ -447,7 +534,7 @@ static int check_certificate(ne_session *sess, gnutls_session sock,
     if (failures == 0) {
         ret = NE_OK;
     } else {
-#warning TODO: set up error string
+        ne__ssl_set_verify_err(sess, failures);
         ret = NE_ERROR;
         if (sess->ssl_verify_fn
             && sess->ssl_verify_fn(sess->ssl_verify_ud, failures, chain) == 0)
@@ -458,9 +545,8 @@ static int check_certificate(ne_session *sess, gnutls_session sock,
 }
 
 /* Negotiate an SSL connection. */
-int ne__negotiate_ssl(ne_request *req)
+int ne__negotiate_ssl(ne_session *sess)
 {
-    ne_session *const sess = ne_get_session(req);
     ne_ssl_context *const ctx = sess->ssl_context;
     ne_ssl_certificate *chain;
     gnutls_session sock;
@@ -481,10 +567,20 @@ int ne__negotiate_ssl(ne_request *req)
         return NE_ERROR;
     }
 
+    if (sess->server_cert && ne_ssl_cert_cmp(sess->server_cert, chain) == 0) {
+        /* Same cert as last time; presume OK.  This is not optimal as
+         * make_peers_chain() has already gone through and done the
+         * expensive DER parsing stuff for the whole chain by now. */
+        ne_ssl_cert_free(chain);
+        return NE_OK;
+    }
+
     if (check_certificate(sess, sock, chain)) {
         ne_ssl_cert_free(chain);
         return NE_ERROR;
     }
+
+    sess->server_cert = chain;
 
     return NE_OK;
 }
@@ -517,7 +613,11 @@ void ne_ssl_context_trustcert(ne_ssl_context *ctx, const ne_ssl_certificate *cer
 
 void ne_ssl_trust_default_ca(ne_session *sess)
 {
-#warning incomplete
+#ifdef NE_SSL_CA_BUNDLE
+    gnutls_certificate_set_x509_trust_file(sess->ssl_context->cred,
+                                           NE_SSL_CA_BUNDLE,
+                                           GNUTLS_X509_FMT_PEM);
+#endif
 }
 
 /* Read the contents of file FILENAME into *DATUM. */
@@ -543,7 +643,7 @@ static int read_to_datum(const char *filename, gnutls_datum *datum)
     }
     
     datum->size = ne_buffer_size(buf);
-    datum->data = ne_buffer_finish(buf);
+    datum->data = (unsigned char *)ne_buffer_finish(buf);
     return 0;
 }
 
@@ -736,7 +836,7 @@ ne_ssl_certificate *ne_ssl_cert_read(const char *filename)
 int ne_ssl_cert_write(const ne_ssl_certificate *cert, const char *filename)
 {
     unsigned char buffer[10*1024];
-    int len = sizeof buffer;
+    size_t len = sizeof buffer;
 
     FILE *fp = fopen(filename, "w");
 
@@ -835,8 +935,9 @@ char *ne_ssl_cert_export(const ne_ssl_certificate *cert)
 
 int ne_ssl_cert_digest(const ne_ssl_certificate *cert, char *digest)
 {
-    int j, len = 20;
     char sha1[20], *p;
+    int j;
+    size_t len = sizeof sha1;
 
     if (gnutls_x509_crt_get_fingerprint(cert->subject, GNUTLS_DIG_SHA,
                                         sha1, &len) < 0)
@@ -850,4 +951,24 @@ int ne_ssl_cert_digest(const ne_ssl_certificate *cert, char *digest)
 
     *--p = '\0';
     return 0;
+}
+
+int ne__ssl_init(void)
+{
+#ifdef NE_HAVE_TS_SSL
+    gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+#endif
+    return gnutls_global_init();
+}
+
+void ne__ssl_exit(void)
+{
+    /* No way to unregister the thread callbacks.  Doomed. */
+#if 0
+    /* It's safe to call gnutls_global_deinit() here only with
+     * gnutls >= 1.3, since older versions don't refcount and
+     * doing so would prevent any other use of gnutls within
+     * the process. */
+    gnutls_global_deinit();
+#endif
 }

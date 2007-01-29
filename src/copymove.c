@@ -191,6 +191,45 @@ static int copy_coll(void)
     return OK;
 }
 
+static int copy_shallow(void)
+{
+    char *csrc, *cdest, *res;
+
+    csrc = ne_concat(i_path, "ccsrc/", NULL);
+    cdest = ne_concat(i_path, "ccdest/", NULL);
+
+    /* Set up the ccsrc collection with one member */
+    ONMREQ("MKCOL", csrc, ne_mkcol(i_session, csrc));
+    CALL(upload_foo("ccsrc/foo"));
+
+    /* Clean up to make some fresh copies. */
+    ne_delete(i_session, cdest);
+
+    /* Now copy with Depth 0 */
+    ONV(ne_copy(i_session, 0, NE_DEPTH_ZERO, csrc, cdest),
+	("collection COPY `%s' to `%s': %s", csrc, cdest,
+	 ne_get_error(i_session)));
+
+    /* Remove the source, to be paranoid. */
+    if (ne_delete(i_session, csrc)) {
+	t_warning("Could not delete csrc");
+    }
+
+    /* Now make sure the child resource hasn't been copied along with
+     * the collection. */
+    res = ne_concat(i_path, "foo", NULL);
+    ne_delete(i_session, res);
+    ONV(STATUS(404), 
+        ("DELETE on `%s' should fail with 404: got %d", res, GETSTATUS));
+    ne_free(res);
+
+    if (ne_delete(i_session, cdest)) {
+	t_warning("Could not clean up cdest");
+    }
+
+    return OK;
+}
+
 static int move(void)
 {
     char *src2;
@@ -326,8 +365,10 @@ ne_test tests[] = {
     T(copy_nodestcoll), 
     T(copy_cleanup), 
 
-    T(copy_coll), T(move), T(move_coll), T(move_cleanup),
-    
+    T(copy_coll), T(copy_shallow),
+
+    T(move), T(move_coll), T(move_cleanup),
+
     FINISH_TESTS
 };
 

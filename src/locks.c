@@ -1,6 +1,6 @@
 /* 
    litmus: WebDAV server test suite
-   Copyright (C) 2001-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2006, Joe Orton <joe@manyfish.co.uk>
                                                                      
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -209,7 +209,12 @@ static int owner_modify(void)
 
 /* ne_lock_discover which counts number of calls. */
 static void count_discover(void *userdata, const struct ne_lock *lock,
-			   const char *uri, const ne_status *status)
+#ifdef HAVE_NEON_026PLUS
+                           const ne_uri *uri,
+#else
+			   const char *uri, 
+#endif
+                           const ne_status *status)
 {
     if (lock) {
 	int *count = userdata;
@@ -256,7 +261,12 @@ static int compare_locks(const struct ne_lock *exp, const struct ne_lock *act)
 
 /* check that the lock returned has correct URI, token */
 static void verify_discover(void *userdata, const struct ne_lock *lock,
-			    const char *uri, const ne_status *status)
+#ifdef HAVE_NEON_026PLUS
+                            const ne_uri *uri,
+#else
+                            const char *uri, 
+#endif
+			    const ne_status *status)
 {
     int *ret = userdata;
 

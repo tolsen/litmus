@@ -1,6 +1,6 @@
 /* 
    HTTP request/response handling
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -27,11 +27,12 @@
 
 #include <sys/types.h>
 
+#ifdef HAVE_SYS_LIMITS_H
+#include <sys/limits.h>
+#endif
 #ifdef HAVE_LIMITS_H
 #include <limits.h> /* for UINT_MAX etc */
 #endif
-
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #ifdef HAVE_STRING_H
@@ -47,7 +48,7 @@
 #include <unistd.h>
 #endif
 
-#include "ne_i18n.h"
+#include "ne_internal.h"
 
 #include "ne_alloc.h"
 #include "ne_request.h"
@@ -66,13 +67,15 @@ if (sret < 0) return aborted(req, msg, sret); } while (0)
 struct body_reader {
     ne_block_reader handler;
     ne_accept_response accept_response;
-    unsigned int use:1;
+    unsigned int use;
     void *userdata;
     struct body_reader *next;
 };
 
 #if !defined(LONG_LONG_MAX) && defined(LLONG_MAX)
 #define LONG_LONG_MAX LLONG_MAX
+#elif !defined(LONG_LONG_MAX) && defined(LONGLONG_MAX)
+#define LONG_LONG_MAX LONGLONG_MAX
 #endif
 
 #ifdef NE_LFS
@@ -180,7 +183,7 @@ struct ne_request_s {
         ne_off_t progress; /* number of bytes read of response */
     } resp;
     
-    struct hook *private, *pre_send_hooks;
+    struct hook *private;
 
     /* response header fields */
     struct field *response_headers[HH_HASHSIZE];
@@ -191,15 +194,16 @@ struct ne_request_s {
     struct body_reader *body_readers;
 
     /*** Miscellaneous ***/
-    unsigned int method_is_head:1;
-    unsigned int use_expect100:1;
-    unsigned int can_persist:1;
+    unsigned int method_is_head;
+    unsigned int can_persist;
+
+    int flags[NE_REQFLAG_LAST];
 
     ne_session *session;
     ne_status status;
 };
 
-static int open_connection(ne_request *req);
+static int open_connection(ne_session *sess);
 
 /* Returns hash value for header 'name', converting it to lower-case
  * in-place. */
@@ -209,7 +213,7 @@ static inline unsigned int hash_and_lower(char *name)
     unsigned int hash = 0;
 
     for (pnt = name; *pnt != '\0'; pnt++) {
-	*pnt = tolower(*pnt);
+	*pnt = ne_tolower(*pnt);
 	hash = HH_ITERATE(hash,*pnt);
     }
 
@@ -281,70 +285,22 @@ void *ne_get_session_private(ne_session *sess, const char *id)
     return get_private(sess->private, id);
 }
 
-typedef void (*void_fn)(void);
-
-#define ADD_HOOK(hooks, fn, ud) add_hook(&(hooks), NULL, (void_fn)(fn), (ud))
-
-static void add_hook(struct hook **hooks, const char *id, void_fn fn, void *ud)
+void ne_set_request_private(ne_request *req, const char *id, void *userdata)
 {
     struct hook *hk = ne_malloc(sizeof (struct hook)), *pos;
 
-    if (*hooks != NULL) {
-	for (pos = *hooks; pos->next != NULL; pos = pos->next)
+    if (req->private != NULL) {
+	for (pos = req->private; pos->next != NULL; pos = pos->next)
 	    /* nullop */;
 	pos->next = hk;
     } else {
-	*hooks = hk;
+	req->private = hk;
     }
 
     hk->id = id;
-    hk->fn = fn;
-    hk->userdata = ud;
+    hk->fn = NULL;
+    hk->userdata = userdata;
     hk->next = NULL;
-}
-
-void ne_hook_create_request(ne_session *sess, 
-			    ne_create_request_fn fn, void *userdata)
-{
-    ADD_HOOK(sess->create_req_hooks, fn, userdata);
-}
-
-void ne_hook_pre_send(ne_session *sess, ne_pre_send_fn fn, void *userdata)
-{
-    ADD_HOOK(sess->pre_send_hooks, fn, userdata);
-}
-
-void ne_hook_post_send(ne_session *sess, ne_post_send_fn fn, void *userdata)
-{
-    ADD_HOOK(sess->post_send_hooks, fn, userdata);
-}
-
-void ne_hook_destroy_request(ne_session *sess,
-			     ne_destroy_req_fn fn, void *userdata)
-{
-    ADD_HOOK(sess->destroy_req_hooks, fn, userdata);    
-}
-
-void ne_hook_destroy_session(ne_session *sess,
-			     ne_destroy_sess_fn fn, void *userdata)
-{
-    ADD_HOOK(sess->destroy_sess_hooks, fn, userdata);
-}
-
-/* Hack to fix ne_compress layer problems */
-void ne__reqhook_pre_send(ne_request *req, ne_pre_send_fn fn, void *userdata)
-{
-    ADD_HOOK(req->pre_send_hooks, fn, userdata);
-}
-
-void ne_set_session_private(ne_session *sess, const char *id, void *userdata)
-{
-    add_hook(&sess->private, id, NULL, userdata);
-}
-
-void ne_set_request_private(ne_request *req, const char *id, void *userdata)
-{
-    add_hook(&req->private, id, NULL, userdata);
 }
 
 static ssize_t body_string_send(void *userdata, char *buffer, size_t count)
@@ -386,18 +342,20 @@ static ssize_t body_fd_send(void *userdata, char *buffer, size_t count)
             req->body.file.remain = req->body.file.length;
             return 0;
         } else {
-            char err[200];
+            char err[200], offstr[20];
 
             if (newoff == -1) {
                 /* errno was set */
                 ne_strerror(errno, err, sizeof err);
             } else {
                 strcpy(err, _("offset invalid"));
-            }                       
+            }
+            ne_snprintf(offstr, sizeof offstr, "%" FMT_NE_OFF_T,
+                        req->body.file.offset);
             ne_set_error(req->session, 
-                         _("Could not seek to offset %" FMT_NE_OFF_T 
+                         _("Could not seek to offset %s"
                            " of request body file: %s"), 
-                           req->body.file.offset, err);
+                           offstr, err);
             return -1;
         }
     }
@@ -479,7 +437,7 @@ static void add_fixed_headers(ne_request *req)
      * close; otherwise, send Connection: Keep-Alive to pre-1.1 origin
      * servers to try harder to get a persistent connection, except if
      * using a proxy as per 2068§19.7.1.  Always add TE: trailers. */
-    if (req->session->no_persist) {
+    if (!req->session->flags[NE_SESSFLAG_PERSIST]) {
        ne_buffer_czappend(req->headers,
                           "Connection: TE, close" EOL
                           "TE: trailers" EOL);
@@ -512,6 +470,9 @@ ne_request *ne_request_create(ne_session *sess,
 
     req->session = sess;
     req->headers = ne_buffer_create();
+    
+    /* Presume the method is idempotent by default. */
+    req->flags[NE_REQFLAG_IDEMPOTENT] = 1;
 
     /* Add in the fixed headers */
     add_fixed_headers(req);
@@ -597,9 +558,19 @@ void ne_set_request_body_provider64(ne_request *req, off64_t bodysize,
 }
 #endif
 
-void ne_set_request_expect100(ne_request *req, int flag)
+void ne_set_request_flag(ne_request *req, ne_request_flag flag, int value)
 {
-    req->use_expect100 = flag;
+    if (flag < NE_SESSFLAG_LAST) {
+        req->flags[flag] = value;
+    }
+}
+
+int ne_get_request_flag(ne_request *req, ne_request_flag flag)
+{
+    if (flag < NE_REQFLAG_LAST) {
+        return req->flags[flag];
+    }
+    return -1;
 }
 
 void ne_add_request_header(ne_request *req, const char *name, 
@@ -740,16 +711,13 @@ void ne_request_destroy(ne_request *req)
     ne_buffer_destroy(req->headers);
 
     NE_DEBUG(NE_DBG_HTTP, "Running destroy hooks.\n");
-    for (hk = req->session->destroy_req_hooks; hk; hk = hk->next) {
+    for (hk = req->session->destroy_req_hooks; hk; hk = next_hk) {
 	ne_destroy_req_fn fn = (ne_destroy_req_fn)hk->fn;
+        next_hk = hk->next;
 	fn(req, hk->userdata);
     }
 
     for (hk = req->private; hk; hk = next_hk) {
-	next_hk = hk->next;
-	ne_free(hk);
-    }
-    for (hk = req->pre_send_hooks; hk; hk = next_hk) {
 	next_hk = hk->next;
 	ne_free(hk);
     }
@@ -898,15 +866,11 @@ static ne_buffer *build_request(ne_request *req)
     ne_buffer_append(buf, req->headers->data, ne_buffer_size(req->headers));
 
 #define E100 "Expect: 100-continue" EOL
-    if (req->use_expect100)
+    if (req->flags[NE_REQFLAG_EXPECT100])
 	ne_buffer_append(buf, E100, strlen(E100));
 
     NE_DEBUG(NE_DBG_HTTP, "Running pre_send hooks\n");
     for (hk = req->session->pre_send_hooks; hk!=NULL; hk = hk->next) {
-	ne_pre_send_fn fn = (ne_pre_send_fn)hk->fn;
-	fn(req, hk->userdata, buf);
-    }
-    for (hk = req->pre_send_hooks; hk!=NULL; hk = hk->next) {
 	ne_pre_send_fn fn = (ne_pre_send_fn)hk->fn;
 	fn(req, hk->userdata, buf);
     }
@@ -971,8 +935,20 @@ static int read_status_line(ne_request *req, ne_status *status, int retry)
     if (status->reason_phrase) ne_free(status->reason_phrase);
     memset(status, 0, sizeof *status);
 
-    if (ne_parse_statusline(buffer, status))
+    /* Hack to allow ShoutCast-style servers, if requested. */
+    if (req->session->flags[NE_SESSFLAG_ICYPROTO]
+        && strncmp(buffer, "ICY ", 4) == 0 && strlen(buffer) > 8
+        && buffer[7] == ' ') {
+        status->code = atoi(buffer + 4);
+        status->major_version = 1;
+        status->minor_version = 0;
+        status->reason_phrase = ne_strclean(ne_strdup(buffer + 8));
+        status->klass = buffer[4] - '0';
+        NE_DEBUG(NE_DBG_HTTP, "[status-line] ICY protocol; code %d\n", 
+                 status->code);
+    } else if (ne_parse_statusline(buffer, status)) {
 	return aborted(req, _("Could not parse response status line."), 0);
+    }
 
     return 0;
 }
@@ -1008,7 +984,7 @@ static int send_request(ne_request *req, const ne_buffer *request)
     /* Send the Request-Line and headers */
     NE_DEBUG(NE_DBG_HTTP, "Sending request-line and headers:\n");
     /* Open the connection if necessary */
-    ret = open_connection(req);
+    ret = open_connection(sess);
     if (ret) return ret;
 
     /* Allow retry if a persistent connection has been used. */
@@ -1017,11 +993,11 @@ static int send_request(ne_request *req, const ne_buffer *request)
     sret = ne_sock_fullwrite(req->session->socket, request->data, 
                              ne_buffer_size(request));
     if (sret < 0) {
-	int aret = aborted(req, _("Could not send request"), ret);
+	int aret = aborted(req, _("Could not send request"), sret);
 	return RETRY_RET(retry, sret, aret);
     }
     
-    if (!req->use_expect100 && req->body_length > 0) {
+    if (!req->flags[NE_REQFLAG_EXPECT100] && req->body_length > 0) {
 	/* Send request body, if not using 100-continue. */
 	ret = send_request_body(req, retry);
 	if (ret) {
@@ -1040,7 +1016,7 @@ static int send_request(ne_request *req, const ne_buffer *request)
 	/* Discard headers with the interim response. */
 	if ((ret = discard_headers(req)) != NE_OK) break;
 
-	if (req->use_expect100 && (status->code == 100)
+	if (req->flags[NE_REQFLAG_EXPECT100] && (status->code == 100)
             && req->body_length > 0 && !sentbody) {
 	    /* Send the body after receiving the first 100 Continue */
 	    if ((ret = send_request_body(req, 0)) != NE_OK) break;	    
@@ -1167,7 +1143,7 @@ static int read_response_headers(ne_request *req)
 	/* Convert the header name to lower case and hash it. */
 	for (pnt = hdr; (*pnt != '\0' && *pnt != ':' && 
 			 *pnt != ' ' && *pnt != '\t'); pnt++) {
-	    *pnt = tolower(*pnt);
+	    *pnt = ne_tolower(*pnt);
 	    hash = HH_ITERATE(hash,*pnt);
 	}
 
@@ -1230,6 +1206,16 @@ int ne_begin_request(ne_request *req)
     const char *value;
     int ret;
 
+    /* If a non-idempotent request is sent on a persisted connection,
+     * then it is impossible to distinguish between a server failure
+     * and a connection timeout if an EOF/RST is received.  So don't
+     * do that. */
+    if (!req->flags[NE_REQFLAG_IDEMPOTENT] && req->session->persisted) {
+        NE_DEBUG(NE_DBG_HTTP, "req: Closing connection for non-idempotent "
+                 "request.\n");
+        ne_close_connection(req->session);
+    }
+
     /* Resolve hostname if necessary. */
     host = req->session->use_proxy?&req->session->proxy:&req->session->server;
     if (host->address == NULL) {
@@ -1242,7 +1228,7 @@ int ne_begin_request(ne_request *req)
     DEBUG_DUMP_REQUEST(data->data);
     ret = send_request(req, data);
     /* Retry this once after a persistent connection timeout. */
-    if (ret == NE_RETRY && !req->session->no_persist) {
+    if (ret == NE_RETRY) {
 	NE_DEBUG(NE_DBG_HTTP, "Persistent connection timed out, retrying.\n");
 	ret = send_request(req, data);
     }
@@ -1358,7 +1344,7 @@ int ne_end_request(ne_request *req)
     
     /* Close the connection if persistent connections are disabled or
      * not supported by the server. */
-    if (req->session->no_persist || !req->can_persist)
+    if (!req->session->flags[NE_SESSFLAG_PERSIST] || !req->can_persist)
 	ne_close_connection(req->session);
     else
 	req->session->persisted = 1;
@@ -1495,9 +1481,8 @@ static const ne_inet_addr *resolve_next(ne_session *sess,
  * that once a connection to a particular network address has
  * succeeded, that address will be used first for the next attempt to
  * connect. */
-static int do_connect(ne_request *req, struct host_info *host, const char *err)
+static int do_connect(ne_session *sess, struct host_info *host, const char *err)
 {
-    ne_session *const sess = req->session;
     int ret;
 
     if ((sess->socket = ne_sock_create()) == NULL) {
@@ -1538,17 +1523,16 @@ static int do_connect(ne_request *req, struct host_info *host, const char *err)
     return NE_OK;
 }
 
-static int open_connection(ne_request *req) 
+static int open_connection(ne_session *sess) 
 {
-    ne_session *sess = req->session;
     int ret;
     
     if (sess->connected) return NE_OK;
 
     if (!sess->use_proxy)
-	ret = do_connect(req, &sess->server, _("Could not connect to server"));
+	ret = do_connect(sess, &sess->server, _("Could not connect to server"));
     else
-	ret = do_connect(req, &sess->proxy,
+	ret = do_connect(sess, &sess->proxy,
 			 _("Could not connect to proxy server"));
 
     if (ret != NE_OK) return ret;
@@ -1557,11 +1541,11 @@ static int open_connection(ne_request *req)
     /* Negotiate SSL layer if required. */
     if (sess->use_ssl && !sess->in_connect) {
         /* CONNECT tunnel */
-        if (req->session->use_proxy)
+        if (sess->use_proxy)
             ret = proxy_tunnel(sess);
         
         if (ret == NE_OK) {
-            ret = ne__negotiate_ssl(req);
+            ret = ne__negotiate_ssl(sess);
             if (ret != NE_OK)
                 ne_close_connection(sess);
         }

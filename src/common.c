@@ -213,8 +213,6 @@ int init(void)
 	i_path = ne_concat(u.path, "/", NULL);
     }
 
-    i_path = ne_path_escape(i_path);
-    
     if (n > 2) {
 	i_username = test_argv[optind+1];
 	i_password = test_argv[optind+2];

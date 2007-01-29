@@ -1,6 +1,6 @@
 /* 
    HTTP utility functions
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -34,7 +34,7 @@
 #include <trio.h>
 #endif
 
-BEGIN_NEON_DECLS
+NE_BEGIN_DECLS
 
 /* Returns a human-readable version string like:
  * "neon 0.2.0: Library build, OpenSSL support"
@@ -52,6 +52,8 @@ int ne_version_match(int major, int minor);
 #define NE_FEATURE_IPV6 (3) /* IPv6 is supported in resolver */
 #define NE_FEATURE_LFS (4) /* large file support */
 #define NE_FEATURE_SOCKS (5) /* SOCKSv5 support */
+#define NE_FEATURE_TS_SSL (6) /* Thread-safe SSL/TLS support */
+#define NE_FEATURE_I18N (7) /* i18n error message support */
 
 /* Returns non-zero if neon has support for given feature code
  * NE_FEATURE_*. */
@@ -112,6 +114,6 @@ typedef struct {
  */
 int ne_parse_statusline(const char *status_line, ne_status *s);
 
-END_NEON_DECLS
+NE_END_DECLS
 
 #endif /* NE_UTILS_H */
