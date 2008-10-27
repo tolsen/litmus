@@ -1,6 +1,6 @@
 /* 
    SSL interface definitions internal to neon.
-   Copyright (C) 2003-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2003, 2004, Joe Orton <joe@manyfish.co.uk>
    Copyright (C) 2004, Aleix Conchillo Flaque <aleix@member.fsf.org>
 
    This library is free software; you can redistribute it and/or
@@ -51,22 +51,7 @@ typedef SSL *ne_ssl_socket;
 
 struct ne_ssl_context_s {
     gnutls_certificate_credentials cred;
-    int verify; /* non-zero if client cert verification required */
-
-    /* Session cache. */
-    union ne_ssl_scache {
-        struct {
-            gnutls_datum key, data;
-        } server;
-#if defined(HAVE_GNUTLS_SESSION_GET_DATA2)
-        gnutls_datum client;
-#else
-        struct {
-            char *data;
-            size_t len;
-        } client;
-#endif
-    } cache;
+    /* TODO: store session here too */
 };
 
 typedef gnutls_session ne_ssl_socket;
@@ -74,12 +59,5 @@ typedef gnutls_session ne_ssl_socket;
 #endif /* HAVE_GNUTLS */
 
 ne_ssl_socket ne__sock_sslsock(ne_socket *sock);
-
-/* Process-global initialization of the SSL library; returns non-zero
- * on error. */
-int ne__ssl_init(void);
-
-/* Process-global de-initialization of the SSL library. */
-void ne__ssl_exit(void);
 
 #endif /* NE_PRIVSSL_H */

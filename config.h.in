@@ -39,9 +39,6 @@
 /* Define if GnuTLS support is enabled */
 #undef HAVE_GNUTLS
 
-/* Define to 1 if you have the `gnutls_session_get_data2' function. */
-#undef HAVE_GNUTLS_SESSION_GET_DATA2
-
 /* Define if GSSAPI support is enabled */
 #undef HAVE_GSSAPI
 
@@ -69,9 +66,6 @@
 /* Define to 1 if you have the `isatty' function. */
 #undef HAVE_ISATTY
 
-/* Define to 1 if you have the <libintl.h> header file. */
-#undef HAVE_LIBINTL_H
-
 /* Define if you have libxml */
 #undef HAVE_LIBXML
 
@@ -83,9 +77,6 @@
 
 /* Define to 1 if you have the <limits.h> header file. */
 #undef HAVE_LIMITS_H
-
-/* Define to 1 if you have the <locale.h> header file. */
-#undef HAVE_LOCALE_H
 
 /* Define to 1 if you have the `lseek64' function. */
 #undef HAVE_LSEEK64
@@ -116,15 +107,6 @@
 
 /* Define to 1 if you have the `poll' function. */
 #undef HAVE_POLL
-
-/* Define to 1 if you have the `pthread_mutex_init' function. */
-#undef HAVE_PTHREAD_MUTEX_INIT
-
-/* Define to 1 if you have the `pthread_mutex_lock' function. */
-#undef HAVE_PTHREAD_MUTEX_LOCK
-
-/* Define to 1 if you have the `setlocale' function. */
-#undef HAVE_SETLOCALE
 
 /* Define to 1 if you have the `setsockopt' function. */
 #undef HAVE_SETSOCKOPT
@@ -183,9 +165,6 @@
 /* Define to 1 if `__tm_gmtoff' is member of `struct tm'. */
 #undef HAVE_STRUCT_TM___TM_GMTOFF
 
-/* Define to 1 if you have the <sys/limits.h> header file. */
-#undef HAVE_SYS_LIMITS_H
-
 /* Define to 1 if you have the <sys/poll.h> header file. */
 #undef HAVE_SYS_POLL_H
 
@@ -203,9 +182,6 @@
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
-
-/* Define if the timezone global is available */
-#undef HAVE_TIMEZONE
 
 /* Use trio printf replacement library */
 #undef HAVE_TRIO
@@ -264,14 +240,8 @@
 /* Defined if SSL is supported */
 #undef NE_HAVE_SSL
 
-/* Defined if TS_SSL is supported */
-#undef NE_HAVE_TS_SSL
-
 /* Defined if ZLIB is supported */
 #undef NE_HAVE_ZLIB
-
-/* Define to be filename of an SSL CA root bundle */
-#undef NE_SSL_CA_BUNDLE
 
 /* Define if poll() should be used */
 #undef NE_USE_POLL
@@ -349,7 +319,7 @@
 /* Define to empty if `const' does not conform to ANSI C. */
 #undef const
 
-/* Define if in_addr_t is not available */
+/* Define if in_addr_t is not availale */
 #undef in_addr_t
 
 /* Define to `__inline__' or `__inline' if that's what the C compiler

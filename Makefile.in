@@ -83,11 +83,23 @@ basic: src/basic.o $(ODEPS)
 copymove: src/copymove.o $(ODEPS)
 	$(CC) $(LDFLAGS) -o $@ src/copymove.o $(ALL_LIBS)
 
+bind: src/bind.o $(ODEPS)
+	$(CC) $(LDFLAGS) -o $@ src/bind.o $(ALL_LIBS)
+
+acl: src/acl.o $(ODEPS)
+	$(CC) $(LDFLAGS) -o $@ src/acl.o $(ALL_LIBS)
+
+version: src/version.o $(ODEPS)
+	$(CC) $(LDFLAGS) -o $@ src/version.o $(ALL_LIBS)
+
 locks: src/locks.o $(ODEPS)
 	$(CC) $(LDFLAGS) -o $@ src/locks.o $(ALL_LIBS)
 
 http: src/http.o $(ODEPS)
 	$(CC) $(LDFLAGS) -o $@ src/http.o $(ALL_LIBS)
+
+principal: src/principal.o $(ODEPS)
+	$(CC) $(LDFLAGS) -o $@ src/principal.o $(ALL_LIBS)
 
 largefile: src/largefile.o $(ODEPS)
 	$(CC) $(LDFLAGS) -o $@ src/largefile.o $(ALL_LIBS)
@@ -101,11 +113,12 @@ libtest.a: $(TESTOBJS)
 
 clean:	
 	@cd lib/neon && $(MAKE) clean
-	rm -f */*.o $(TESTS) largefile libtest.a *~ debug.log child.log
+	@cd lib/expat && rm -f */*.o
+	rm -f */*.o $(TESTS) largefile libtest.a *~ debug.log child.log 
 
 distclean: clean
 	@cd lib/neon && $(MAKE) distclean
-	rm Makefile litmus config.log config.h config.status
+	rm Makefile litmus config.log config.h config.status 
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -116,7 +129,11 @@ Makefile: $(top_srcdir)/Makefile.in
 src/basic.o: src/basic.c $(HDRS)
 src/common.o: src/common.c $(HDRS)
 src/copymove.o: src/copymove.c $(HDRS)
+src/bind.o: src/bind.c $(HDRS)
+src/version.o: src/version.c $(HDRS)
+src/acl.o: src/acl.c $(HDRS)
 src/locks.o: src/locks.c $(HDRS)
 src/props.o: src/props.c $(HDRS)
 src/http.o: src/http.c $(HDRS)
+src/principal.o: src/principal.c $(HDRS)
 src/largefile.o: src/largefile.c $(HDRS)

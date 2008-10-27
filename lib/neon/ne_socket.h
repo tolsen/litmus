@@ -1,6 +1,6 @@
 /* 
    socket handling interface
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -27,7 +27,7 @@
 #include "ne_defs.h"
 #include "ne_ssl.h" /* for ne_ssl_context */
 
-NE_BEGIN_DECLS
+BEGIN_NEON_DECLS
 
 #define NE_SOCK_ERROR (-1)
 /* Read/Write timed out */
@@ -49,13 +49,12 @@ typedef struct ne_sock_addr_s ne_sock_addr;
 typedef struct ne_inet_addr_s ne_inet_addr;
 #endif
 
-/* Perform process-global initialization of any libraries in use.
- * Returns non-zero on error. */
+/* While neon itself doesn't require per-process global
+ * initialization, some platforms do, and so does the OpenSSL
+ * library. */
 int ne_sock_init(void);
 
-/* Perform process-global shutdown of any libraries in use.  This
- * function only has effect when it has been called an equal number of
- * times to ne_sock_init() for the process. */
+/* Shutdown any underlying libraries. */
 void ne_sock_exit(void);
 
 /* Resolve the given hostname.  'flags' must be zero.  Hex
@@ -188,13 +187,6 @@ int ne_sock_accept_ssl(ne_socket *sock, ne_ssl_context *ctx);
 int ne_sock_connect_ssl(ne_socket *sock, ne_ssl_context *ctx,
                         void *userdata);
 
-/* Retrieve the session ID of the current SSL session.  If 'buf' is
- * non-NULL, on success, copies at most *buflen bytes to 'buf' and
- * sets *buflen to the exact number of bytes copied.  If 'buf' is
- * NULL, on success, sets *buflen to the length of the session ID.
- * Returns zero on success, non-zero on error. */
-int ne_sock_sessid(ne_socket *sock, unsigned char *buf, size_t *buflen);
-
-NE_END_DECLS
+END_NEON_DECLS
 
 #endif /* NE_SOCKET_H */

@@ -1,6 +1,6 @@
 /* 
    Socket handling routines
-   Copyright (C) 1998-2006, Joe Orton <joe@manyfish.co.uk>, 
+   Copyright (C) 1998-2005, Joe Orton <joe@manyfish.co.uk>, 
    Copyright (C) 1999-2000 Tommi Komulainen <Tommi.Komulainen@iki.fi>
    Copyright (C) 2004 Aleix Conchillo Flaque <aleix@member.fsf.org>
 
@@ -26,6 +26,11 @@
 */
 
 #include "config.h"
+
+#ifdef __hpux
+/* pick up hstrerror */
+#define _XOPEN_SOURCE_EXTENDED 1
+#endif
 
 #include <sys/types.h>
 #ifdef HAVE_SYS_TIME_H
@@ -124,7 +129,7 @@ typedef struct in_addr ne_inet_addr;
 #define USE_CHECK_IPV6
 #endif
 
-#include "ne_internal.h"
+#include "ne_i18n.h"
 #include "ne_utils.h"
 #include "ne_string.h"
 #include "ne_socket.h"
@@ -229,6 +234,20 @@ static void print_error(int errnum, char *buffer, size_t buflen)
 #define set_strerror(s, e) ne_strerror((e), (s)->error, sizeof (s)->error)
 #endif
 
+#if defined(HAVE_OPENSSL)
+static void init_ssl(void)
+{
+    SSL_load_error_strings();
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+}
+#elif defined(HAVE_GNUTLS)
+static void init_ssl(void)
+{
+    gnutls_global_init();
+}
+#endif /* HAVE_OPENSSL */
+
 #ifdef HAVE_OPENSSL
 /* Seed the SSL PRNG, if necessary; returns non-zero on failure. */
 static int seed_ssl_prng(void)
@@ -278,10 +297,7 @@ static void init_ipv6(void)
 #define ipv6_disabled (0)
 #endif
 
-/* If init_state is N where > 0, ne_sock_init has been called N times;
- * if == 0, library is not initialized; if < 0, library initialization
- * has failed. */
-static int init_state = 0;
+static int init_result = 0;
 
 int ne_sock_init(void)
 {
@@ -291,26 +307,27 @@ int ne_sock_init(void)
     int err;
 #endif
 
-    if (init_state > 0) {
-        init_state++;
+    if (init_result > 0) 
 	return 0;
-    } 
-    else if (init_state < 0) {
+    else if (init_result < 0)
 	return -1;
-    }
 
 #ifdef WIN32    
     wVersionRequested = MAKEWORD(2, 2);
     
     err = WSAStartup(wVersionRequested, &wsaData);
     if (err != 0) {
-	return init_state = -1;
+	init_result = -1;
+	return -1;
     }
+
+#endif
+
 #ifdef HAVE_SSPI
     if (ne_sspi_init() < 0) {
-        return init_state = -1;
+        init_result = -1;
+        return init_result;
     }
-#endif
 #endif
 
 #ifdef NE_HAVE_SOCKS
@@ -326,29 +343,27 @@ int ne_sock_init(void)
 #endif
 
 #ifdef NE_HAVE_SSL
-    if (ne__ssl_init()) {
-        return init_state = -1;
-    }
+    init_ssl();
 #endif
 
-    init_state = 1;
+    init_result = 1;
     return 0;
 }
 
 void ne_sock_exit(void)
 {
-    if (init_state > 0 && --init_state == 0) {
 #ifdef WIN32
-        WSACleanup();
+    WSACleanup();
 #endif
-#ifdef NE_HAVE_SSL
-        ne__ssl_exit();
+#ifdef HAVE_GNUTLS
+    gnutls_global_deinit();
 #endif
-        
+
 #ifdef HAVE_SSPI
-        ne_sspi_deinit();
+    ne_sspi_deinit();
 #endif
-    }
+
+    init_result = 0;
 }
 
 int ne_sock_block(ne_socket *sock, int n)
@@ -626,24 +641,9 @@ static ssize_t error_gnutls(ne_socket *sock, ssize_t sret)
 	set_error(sock, _("Connection closed"));
 	break;
     case GNUTLS_E_FATAL_ALERT_RECEIVED:
-        ret = NE_SOCK_ERROR;
-        ne_snprintf(sock->error, sizeof sock->error, 
-                    _("SSL alert received: %s"),
+	ret = NE_SOCK_RESET;
+        ne_snprintf(sock->error, sizeof sock->error, _("SSL error: %s"),
                     gnutls_alert_get_name(gnutls_alert_get(sock->ssl)));
-        break;
-    case GNUTLS_E_UNEXPECTED_PACKET_LENGTH:
-        /* It's not exactly an API guarantee but this error will
-         * always mean a premature EOF. */
-        ret = NE_SOCK_TRUNC;
-        set_error(sock, _("Secure connection truncated"));
-        break;
-    case GNUTLS_E_PUSH_ERROR:
-        ret = NE_SOCK_RESET;
-        set_error(sock, ("SSL socket write failed"));
-        break;
-    case GNUTLS_E_PULL_ERROR:
-        ret = NE_SOCK_RESET;
-        set_error(sock, _("SSL socket read failed"));
         break;
     default:
         ret = NE_SOCK_ERROR;
@@ -772,7 +772,7 @@ ssize_t ne_sock_fullread(ne_socket *sock, char *buffer, size_t buflen)
 #define INADDR_NONE ((in_addr_t) -1)
 #endif
 
-#if !defined(USE_GETADDRINFO) && !defined(WIN32) && !HAVE_DECL_H_ERRNO
+#if !defined(USE_GETADDRINFO) && !defined(HAVE_DECL_H_ERRNO) && !defined(WIN32)
 /* Ancient versions of netdb.h don't export h_errno. */
 extern int h_errno;
 #endif
@@ -1119,61 +1119,6 @@ void ne_sock_read_timeout(ne_socket *sock, int timeout)
 
 #ifdef NE_HAVE_SSL
 
-#ifdef HAVE_GNUTLS
-/* Dumb server session cache implementation for GNUTLS; holds a single
- * session. */
-
-/* Copy datum 'src' to 'dest'. */
-static void copy_datum(gnutls_datum *dest, gnutls_datum *src)
-{
-    dest->size = src->size;
-    dest->data = memcpy(gnutls_malloc(src->size), src->data, src->size);
-}
-
-/* Callback to store a session 'data' with id 'key'. */
-static int store_sess(void *userdata, gnutls_datum key, gnutls_datum data)
-{
-    ne_ssl_context *ctx = userdata;
-
-    if (ctx->cache.server.key.data) { 
-        gnutls_free(ctx->cache.server.key.data);
-        gnutls_free(ctx->cache.server.data.data);
-    }
-
-    copy_datum(&ctx->cache.server.key, &key);
-    copy_datum(&ctx->cache.server.data, &data);
-
-    return 0;
-}
-
-/* Returns non-zero if d1 and d2 are the same datum. */
-static int match_datum(gnutls_datum *d1, gnutls_datum *d2)
-{
-    return d1->size == d2->size
-        && memcmp(d1->data, d2->data, d1->size) == 0;
-}
-
-/* Callback to retrieve a session of id 'key'. */
-static gnutls_datum retrieve_sess(void *userdata, gnutls_datum key)
-{
-    ne_ssl_context *ctx = userdata;
-    gnutls_datum ret = { NULL, 0 };
-
-    if (match_datum(&ctx->cache.server.key, &key)) {
-        copy_datum(&ret, &ctx->cache.server.data);
-    }
-
-    return ret;
-}
-
-/* Callback to remove a session of id 'key'; stub needed but
- * implementation seems unnecessary. */
-static int remove_sess(void *userdata, gnutls_datum key)
-{
-    return -1;
-}
-#endif
-
 int ne_sock_accept_ssl(ne_socket *sock, ne_ssl_context *ctx)
 {
     int ret;
@@ -1194,24 +1139,11 @@ int ne_sock_accept_ssl(ne_socket *sock, ne_ssl_context *ctx)
     gnutls_credentials_set(ssl, GNUTLS_CRD_CERTIFICATE, ctx->cred);
     gnutls_set_default_priority(ssl);
 
-    /* Set up dummy session cache. */
-    gnutls_db_set_store_function(ssl, store_sess);
-    gnutls_db_set_retrieve_function(ssl, retrieve_sess);    
-    gnutls_db_set_remove_function(ssl, remove_sess);    
-    gnutls_db_set_ptr(ssl, ctx);
-
-    if (ctx->verify)
-        gnutls_certificate_server_set_request(ssl, GNUTLS_CERT_REQUEST);
-
     sock->ssl = ssl;
     gnutls_transport_set_ptr(sock->ssl, (gnutls_transport_ptr) sock->fd);
     ret = gnutls_handshake(ssl);
     if (ret < 0) {
         return error_gnutls(sock, ret);
-    }
-    if (ctx->verify && gnutls_certificate_verify_peers(ssl)) {
-        set_error(sock, _("Client certificate verification failed"));
-        return NE_SOCK_ERROR;
     }
 #endif
     sock->ops = &iofns_ssl;
@@ -1266,40 +1198,12 @@ int ne_sock_connect_ssl(ne_socket *sock, ne_ssl_context *ctx, void *userdata)
     gnutls_credentials_set(sock->ssl, GNUTLS_CRD_CERTIFICATE, ctx->cred);
 
     gnutls_transport_set_ptr(sock->ssl, (gnutls_transport_ptr) sock->fd);
-
-    if (ctx->cache.client.data) {
-#if defined(HAVE_GNUTLS_SESSION_GET_DATA2)
-        gnutls_session_set_data(sock->ssl, 
-                                ctx->cache.client.data, 
-                                ctx->cache.client.size);
-#else
-        gnutls_session_set_data(sock->ssl, 
-                                ctx->cache.client.data, 
-                                ctx->cache.client.len);
-#endif
-    }
     sock->ops = &iofns_ssl;
 
     ret = gnutls_handshake(sock->ssl);
     if (ret < 0) {
 	error_gnutls(sock, ret);
         return NE_SOCK_ERROR;
-    }
-
-    if (!gnutls_session_is_resumed(sock->ssl)) {
-        /* New session.  The old method of using the _get_data
-         * function seems to be broken with 1.3.0 and later*/
-#if defined(HAVE_GNUTLS_SESSION_GET_DATA2)
-        gnutls_session_get_data2(sock->ssl, &ctx->cache.client);
-#else
-        ctx->cache.client.len = 0;
-        if (gnutls_session_get_data(sock->ssl, NULL, 
-                                    &ctx->cache.client.len) == 0) {
-            ctx->cache.client.data = ne_malloc(ctx->cache.client.len);
-            gnutls_session_get_data(sock->ssl, ctx->cache.client.data, 
-                                    &ctx->cache.client.len);
-        }
-#endif
     }
 #endif
     return 0;
@@ -1311,42 +1215,6 @@ ne_ssl_socket ne__sock_sslsock(ne_socket *sock)
 }
 
 #endif
-
-int ne_sock_sessid(ne_socket *sock, unsigned char *buf, size_t *buflen)
-{
-#ifdef NE_HAVE_SSL
-#ifdef HAVE_GNUTLS
-    if (sock->ssl) {
-        return gnutls_session_get_id(sock->ssl, buf, buflen);
-    } else {
-        return -1;
-    }
-#else
-    SSL_SESSION *sess;
-
-    if (!sock->ssl) {
-        return -1;
-    }
-
-    sess = SSL_get0_session(sock->ssl);
-
-    if (!buf) {
-        *buflen = sess->session_id_length;
-        return 0;
-    }
-
-    if (*buflen < sess->session_id_length) {
-        return -1;
-    }
-
-    memcpy(buf, sess->session_id, *buflen);
-    *buflen = sess->session_id_length;
-    return 0;
-#endif
-#else
-    return -1;
-#endif
-}
 
 const char *ne_sock_error(const ne_socket *sock)
 {

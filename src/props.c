@@ -1,6 +1,6 @@
 /* 
    litmus: DAV server test suite
-   Copyright (C) 2001-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2004, Joe Orton <joe@manyfish.co.uk>
                                                                      
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 #include "config.h"
 
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <ne_request.h>
 #include <ne_props.h>
@@ -60,17 +61,26 @@ struct results {
     int result;
 };
 
-#ifdef HAVE_NEON_026PLUS
-static void d0_results(void *userdata, const ne_uri *uri,
-		       const ne_prop_result_set *rset)
-#else
+#define NLP (10)
+static int numliveprops=NLP;
+static const ne_propname live_props[NLP+1] = {
+	{ "DAV:", "creationdate"},
+	{ "DAV:", "displayname"},
+	{ "DAV:", "getcontentlanguage"},
+	{ "DAV:", "getcontentlength"},
+	{ "DAV:", "getcontenttype"},
+	{ "DAV:", "getetag"},
+	{ "DAV:", "getlastmodified"},
+	{ "DAV:", "lockdiscovery"},
+	{ "DAV:", "resourcetype"},
+	{ "DAV:", "supportedlock"},
+	{ NULL }
+};
+
 static void d0_results(void *userdata, const char *uri,
 		       const ne_prop_result_set *rset)
-#endif
 {
     struct results *r = userdata;
-    const char *path;
-#ifndef HAVE_NEON_026PLUS
     const char *scheme;
     size_t slen;
 
@@ -80,17 +90,14 @@ static void d0_results(void *userdata, const char *uri,
     if (strncmp(uri, scheme, slen) == 0 &&
         strncmp(uri+slen, "://", 3) == 0) {
 	/* Absolute URI */
-	path = strchr(uri+slen+3, '/');
-	if (path == NULL) {
+	uri = strchr(uri+slen+3, '/');
+	if (uri == NULL) {
 	    NE_DEBUG(NE_DBG_HTTP, "Invalid URI???");
 	    return;
 	}
     }
-#else
-    path = uri->path;
-#endif
 
-    if (ne_path_compare(path, i_path)) {
+    if (ne_path_compare(uri, i_path)) {
 	t_warning("response href for wrong resource");
     } else {
 	struct private *priv = ne_propset_private(rset);
@@ -104,23 +111,10 @@ static void d0_results(void *userdata, const char *uri,
     }
 }
 
-#ifdef HAVE_NEON_026PLUS
-static void *create_private(void *userdata, const ne_uri *uri)
-{
-    return ne_calloc(sizeof(struct private));
-}
-
-static void destroy_private(void *userdata, void *private)
-{
-    ne_free(private);
-}
-
-#else
 static void *create_private(void *userdata, const char *uri)
 {
     return ne_calloc(sizeof(struct private));
 }
-#endif
 
 static int startelm(void *ud, int parent, const char *nspace,
                     const char *name, const char **atts)
@@ -142,13 +136,9 @@ static int propfind_d0(void)
     int ret;
     struct results r = {0};
 
-    r.ph = ne_propfind_create(i_session, i_path, NE_DEPTH_ZERO);
+    r.ph = ne_propfind_create(i_session, i_path, NE_DEPTH_ZERO,"PROPFIND");
     
-    ne_propfind_set_private(r.ph, create_private, 
-#ifdef HAVE_NEON_026PLUS
-                            destroy_private,
-#endif
-                            NULL);
+    ne_propfind_set_private(r.ph, create_private, NULL);
 
     r.result = FAIL;
     t_context("No responses returned");
@@ -210,8 +200,9 @@ char *prop_uri;
 
 static int propinit(void)
 {
+    //if you decide to add another res here make sure to change the d1_results function accordingly
     prop_uri = ne_concat(i_path, "prop", NULL);
-    
+
     ne_delete(i_session, prop_uri);
 
     CALL(upload_foo("prop"));
@@ -220,6 +211,39 @@ static int propinit(void)
     
     return OK;
 }
+
+/*just to check whether all the members are returned when doing
+Depth:1 on root. After adding one member that is.*/
+//TODO: implement this in a better way.
+static void d1_results(void *userdata, const char *uri,
+		       const ne_prop_result_set *rset)
+{
+	struct results *r = userdata;
+	if (!ne_path_compare(uri, prop_uri)) {
+		r->result=0; //only if it finds propuri	will this be set to succeed.
+	}
+
+
+
+}
+
+static int propfind_d1(void)
+{
+    struct results r = {0};
+
+    r.result = 1; 
+    t_context("PROPFIND did not return the newly added resource %s", prop_uri);
+
+    ONMREQ("PROPFIND", prop_uri,
+	   ne_simple_propfind(i_session, i_path, NE_DEPTH_ONE,
+			      NULL, d1_results, &r));
+    if (r.result) {
+	return r.result;
+    }
+
+	return OK;
+}
+
 
 #define NP (10)
 
@@ -260,13 +284,8 @@ static int propset(void)
     return OK;
 }
 
-#ifdef HAVE_NEON_026PLUS
-static void pg_results(void *userdata, const ne_uri *uri,
-		       const ne_prop_result_set *rset)
-#else
 static void pg_results(void *userdata, const char *uri,
 		       const ne_prop_result_set *rset)
-#endif
 {
     struct results *r = userdata;
     const char *value;
@@ -332,18 +351,49 @@ static int propget(void)
     return OK;
 }
 
+char *creationdate=NULL;
+static void pg_results_gcd(void *userdata, const char *uri,
+		       const ne_prop_result_set *rset)
+{
+	creationdate = ne_strdup(ne_propset_value(rset, &live_props[0]));
+	const ne_status *status = ne_propset_status(rset, &live_props[0]);
+	if(status->code != 200)
+		t_warning("Property %s returns %d and not 200",live_props[0].name,status->code);
+	if(creationdate==NULL)
+		t_warning("No value for Property %s ",live_props[0].name);
+
+}
+
+static int propget_creationdate(const char *uri)
+{
+	//const char *body="<D:prop><D:creationdate/></D:prop>"
+	struct results r = {0};
+	ONMREQ("PROPFIND", uri,
+		ne_simple_propfind(i_session,uri,NE_DEPTH_ZERO,live_props ,pg_results_gcd, &r));
+	return OK;
+}
+
 static int propmove(void)
 {
     char *dest;
-
+    char *src_creationdate;
     PRECOND(prop_ok);
 
     dest = ne_concat(i_path, "prop2", NULL);
     
     ne_delete(i_session, dest);
+    
+    //get the creation date of the source.
+    propget_creationdate(prop_uri);
+    if(creationdate !=NULL)
+	src_creationdate = ne_strdup(creationdate);
 
     ONM2REQ("MOVE", prop_uri, dest,
 	    ne_move(i_session, 0, prop_uri, dest));
+
+   propget_creationdate(dest);
+   if(strcmp(creationdate, src_creationdate)!=0)
+	t_warning("Move from %s to %s should not have changed the creation date",prop_uri,dest);
 
     free(prop_uri);
     prop_uri = dest;
@@ -387,20 +437,85 @@ static int propreplace(void)
     return OK;
 }
 
+
+
+/*Test whether all dead props are copied on a dest res that already
+exists by the same bind name*/
+static int propcopy(void)
+{
+    char *dest, *coll;
+    PRECOND(prop_ok);
+
+    //using the same name as in propinit, to enable to copy on same bind name.
+    dest = ne_concat(i_path, "copycoll/prop", NULL);
+    coll = ne_concat(i_path, "copycoll/", NULL);
+    //delete if it was already there. fresh start.
+    ne_delete(i_session, dest);
+   //create a collection
+    ONNREQ("could not create collection", ne_mkcol(i_session, coll));
+
+    //upload the file on the detination
+    CALL(upload_foo("copycoll/prop"));
+
+    ONM2REQ("dead properties copy on COPY of a resource", prop_uri, dest,
+	    ne_copy(i_session, 1, NE_DEPTH_INFINITE, prop_uri, dest));
+
+    ne_delete(i_session, dest);
+    ne_delete(i_session, coll);
+
+    return OK;
+}
+
+/*Test whether all dead props are copied on an unmapped url.*/
+static int propcopy_unmapped(void)
+{
+    char *dest;
+    char *src_creationdate=NULL;
+    PRECOND(prop_ok);
+
+    dest = ne_concat(i_path, "copydest", NULL);
+
+    //delete if it was already there. fresh start.
+    ne_delete(i_session, dest);
+    //get the creation date of the source.
+    propget_creationdate(prop_uri);
+    if(creationdate !=NULL)
+	src_creationdate=ne_strdup(creationdate);
+
+   //let's  sleep zzzzzzzzz
+   sleep(2);
+
+    ONM2REQ("dead properties copy on COPY", prop_uri, dest,
+	    ne_copy(i_session, 0, NE_DEPTH_INFINITE, prop_uri, dest));
+
+
+   //check for DAV:creationdate since it was an unmapped url
+   propget_creationdate(dest);
+   if(strcmp(creationdate, src_creationdate)==0)
+	t_warning("Copy from %s to unmapped url %s should have changed the creation date %s %s",prop_uri,dest);
+
+    ne_delete(i_session, dest);
+
+
+    return OK;
+}
+
 /* Test whether the response to a PROPFIND request with given body is
  * well-formed XML. */
-static int propfind_returns_wellformed(const char *msg, const char *body)
+static int propfind_returns_wellformed(const char *msg, const char *body, char *request)
 {
     ne_xml_parser *p = ne_xml_create();
-    ne_request *req = ne_request_create(i_session, "PROPFIND", prop_uri);
+    ne_request *req = ne_request_create(i_session, request, prop_uri);
 
     ne_set_request_body_buffer(req, body, strlen(body));
 
     ne_add_response_body_reader(req, ne_accept_207, ne_xml_parse_v, p);
-    ONMREQ("PROPFIND", prop_uri, ne_request_dispatch(req));
+    ONMREQ(request, prop_uri, ne_request_dispatch(req));
     
-    ONV(ne_xml_failed(p), ("PROPFIND response %s was not well-formed: %s",
-                           msg, ne_xml_get_error(p)));
+    ONV(ne_get_status(req)->code != 207, ("%s", msg));
+    ONV(ne_get_status(req)->klass == 4, ("%s", msg));
+    ONV(ne_xml_failed(p), ("%s response %s was not well-formed: %s",
+                           request, msg, ne_xml_get_error(p)));
 
     ne_xml_destroy(p);
     ne_request_destroy(req);
@@ -414,7 +529,10 @@ static int do_patch(const char *failmsg, const char *body)
 {
     ne_request *req = ne_request_create(i_session, "PROPPATCH", prop_uri);
 
+    //setting content type as xml..don't ask.
+    ne_add_request_header(req, "Content-Type", NE_XML_MEDIA_TYPE);
     ne_set_request_body_buffer(req, body, strlen(body));
+
     
     ONNREQ(failmsg, ne_request_dispatch(req));
     ONV(ne_get_status(req)->klass != 2, ("%s", failmsg));
@@ -449,6 +567,301 @@ static int propnullns(void)
     return OK;
 }
 
+
+
+static int numlpinc=2;
+static int incliveprops=0;
+static const ne_propname live_props_inc[2] = {
+	{ "DAV:", "quota-available-bytes"},
+	{ "DAV:", "quota-used-bytes"}
+};
+/*
+internal function to compare returned and stored propnames
+*/
+static void propcmp(void *userdata,const ne_propname *pname,
+			  const ne_prop_result_set *rset)
+{
+	const char *value = ne_propset_value(rset, pname);
+	if (value == NULL)
+	   t_warning("Server did not return the property: %s", pname->name);
+	
+}
+
+/* chking for response from allprop
+*all live and dead properties should be returned
+*/
+static void pg_results_allprop(void *userdata, const char *uri,
+		       const ne_prop_result_set *rset)
+{
+	int i;
+	for(i=0;i<numprops;i++)
+	{
+		propcmp(userdata, &propnames[i], rset);
+	}
+	for(i=0;i<numliveprops;i++)
+	{
+		propcmp(userdata, &live_props[i], rset);
+	}
+	if(incliveprops)
+	{
+		for(i=0;i<numlpinc;i++)
+		{
+			propcmp(userdata, &live_props_inc[i], rset);
+		}
+	}
+}
+/*propfind with an empty body should be treated as allprop request.*/
+static int propfind_empty(void)
+{
+	struct results r = {0};
+
+	r.ph = ne_propfind_create(i_session,prop_uri, NE_DEPTH_ZERO,"PROPFIND");
+	ONMREQ("PROPFIND", prop_uri,
+		ne_propfind(r.ph,NULL,pg_results_allprop, &r, ne_propfind_method));
+	ne_propfind_destroy(r.ph);
+        return OK;
+}
+
+static int propfind_allprop_include(void)
+{
+    char body[512];
+    //if you change this change in live_props_inc as well.
+    sprintf(body,  "<D:allprop />"
+                   "<D:include>"
+                   "<D:quota-available-bytes />"
+                   "<D:quota-used-bytes />"
+                   "</D:include>");
+
+	struct results r = {0};
+	incliveprops=1;
+	r.ph = ne_propfind_create(i_session,prop_uri, NE_DEPTH_ZERO,"PROPFIND");
+	ONMREQ("PROPFIND", prop_uri,
+		ne_propfind(r.ph,body,pg_results_allprop, &r, ne_propfind_method));
+	ne_propfind_destroy(r.ph);
+	incliveprops=0;
+        return OK;
+}
+
+static int propfind_propname(void)
+{
+	struct results r = {0};
+	//I don't know if it should return all the property names or only defined by the spec,
+	//I am presuming it should be like allprop for names.
+	incliveprops=1;
+	r.ph = ne_propfind_create(i_session,prop_uri, NE_DEPTH_ZERO,"PROPFIND");
+	ONMREQ("PROPFIND", prop_uri,
+		ne_propfind(r.ph,"<D:propname/>",pg_results_allprop, &r, ne_propfind_method));
+incliveprops=0;
+	ne_propfind_destroy(r.ph);
+	return OK;
+}
+
+
+/* PROPPATCH of property with mixed content */
+static int property_mixed(void)
+{
+    PRECOND(prop_ok);
+    char body[1024];
+    
+    sprintf(body,XML_DECL "<D:propertyupdate xmlns:D='DAV:'><D:set><D:prop xml:lang=\"en\">"
+                "<x:author xmlns:x='http://example.com/ns'>"
+                "<x:name>Sharad</x:name>"
+                "<x:uri type='email'  "
+                "added='2007-01-26'>mailto:sharad@example.com</x:uri>"
+                "<x:uri type='web' " 
+                " added='2005-11-27'>http://www.example.com</x:uri>"
+                "<x:notes xmlns:h='http://www.w3.org/1999/xhtml'>"
+                "Sharad has been working way <h:em>too</h:em> long on the"  
+                "long-awaited revision of...."
+                " </x:notes>"
+                "</x:author>"
+		 "</D:prop></D:set></D:propertyupdate>");
+	CALL(do_patch("PROPPATCH of dead property with mixed contents",body));
+	return OK;
+    //return propfind_returns_wellformed("Dead Property Update - XML test",body,"PROPPATCH");
+    //no need to do xml parsing here as we just need to check valid xml which do_patch will do anyway.	
+}
+
+#define ELM_author (NE_PROPS_STATE_TOP + 1)
+#define ELM_name (NE_PROPS_STATE_TOP + 2)
+#define ELM_uri (NE_PROPS_STATE_TOP + 3)
+#define ELM_notes (NE_PROPS_STATE_TOP + 4)
+#define ELM_em (NE_PROPS_STATE_TOP + 5)
+
+//id map of xml defined for dead property author
+static const struct ne_xml_idmap map_author[] = {
+    { "http://example.com/ns", "author", ELM_author },
+    { "http://example.com/ns", "name", ELM_name },
+    { "http://example.com/ns", "uri", ELM_uri },
+    { "http://example.com/ns", "notes", ELM_notes },
+    { "http://www.w3.org/1999/xhtml", "em", ELM_em }
+};
+
+/*Callback to handle start element of dead property author*/
+static int start_elm_author(void *userdata, int parent, const char *nspace,
+                    const char *name, const char **atts)
+{
+	struct results *r = userdata;
+	int state = ne_xml_mapid(map_author, NE_XML_MAPLEN(map_author), nspace, name);
+
+	//I am ignoring xml:lang ns because it is too hard to handle.
+	//TODO: chk if the the prefix is same, if not raise a warning.
+	//find a better way to handle complex xml property, this is a very bad way.
+	if (parent == NE_207_STATE_PROP && state == ELM_author)
+	{
+		//nothing to chk if adding any att add the line as below, do not include <>
+		//att = ne_xml_get_attr(r->ph->parser,atts,"http://example.com/ns","<attsname>");
+		return ELM_author;
+	}
+	else if (parent == ELM_author && state == ELM_name)
+        {
+		//no attr to chk
+		return ELM_name;
+	}
+	else if (parent == ELM_author && state == ELM_uri)
+        {
+		//check att type and added. no need to chk anything else.
+		if(ne_xml_get_attr(ne_propfind_get_parser(r->ph),atts,NULL,"type") != NULL &&
+		   ne_xml_get_attr(ne_propfind_get_parser(r->ph),atts,NULL,"added") != NULL)
+		return ELM_uri;
+		else
+		{
+			r->result=FAIL;
+			t_context("did not preserve attributes in xml element");
+			return NE_XML_ABORT;
+		}
+	}
+	else if (parent == ELM_author && state == ELM_notes)
+        {
+		//TODO: check for mixed content and further tags
+		return ELM_notes;
+	}
+	else if (parent == ELM_notes && state == ELM_em)
+        {
+		//check for ns
+		//TODO: any kind of mix data is not parsed for xml elem of a property????
+		return ELM_em;
+	}
+	else
+	{
+		r->result = FAIL;
+		return NE_XML_ABORT;
+	}
+
+	return NE_XML_DECLINE;
+}
+
+/*Callback to handle char data of dead property author*/
+//static int chardata_elm(void *userdata,int state, const ne_xml_char *data, int len)
+//{
+//	//FIX IT, to chk for the value, ns of the xml elements.
+//return 0;
+//}
+
+static int propfind_mixed()
+{	
+const ne_propname prop[] = {
+    { "http://example.com/ns", "author" },
+    { NULL }
+};
+    int ret;
+    struct results r = {0};
+
+    r.ph = ne_propfind_create(i_session, prop_uri, NE_DEPTH_ZERO,"PROPFIND");
+
+    r.result = OK;
+    t_context("property value not as expected");
+
+    ne_xml_push_handler(ne_propfind_get_parser(r.ph), start_elm_author,
+                        NULL, NULL, r.ph);
+
+    ret = ne_propfind_named(r.ph, prop, NULL, &r);
+
+       return r.result;
+}
+
+static int numlp_unprotect=2;
+//this array has dependency on two functions
+//pg_results_liveunprop and pgresults_invalid_sem
+static const ne_propname live_prop_unprotect[2] = {
+	{ "DAV:", "getcontentlanguage"},
+	{ "DAV:", "displayname"}
+};
+
+static void pgresults_invalid_sem(void *userdata, const char *uri,
+		       const ne_prop_result_set *rset)
+{
+	const ne_status *status;
+
+	if (STATUS(207)) //not 207
+		t_warning("PROPPATCH of property got %d response, not 207",
+		  	 GETSTATUS);
+    	else //207
+	{
+		//I am expecting a conflict here as the values passed are not correct according to 
+		//[RFC2616]
+		status = ne_propset_status(rset, &live_prop_unprotect[0]);
+		if (status->code != 409)
+		t_warning("The status for setting property %s was %d and not 409 as expected",
+			live_prop_unprotect[0].name, status->code);
+	}
+}
+
+static int proppatch_invalid_semantics(void)
+{
+	//if you make changes here change the live_prop_unprotect as well
+    char * body =   "<D:set><D:prop>"
+        	"<D:getcontentlanguage>sdkjhfkjsdh</D:getcontentlanguage>"
+		"</D:prop></D:set>";
+
+    struct results r = {0};
+    r.ph = ne_propfind_create(i_session,prop_uri, NE_DEPTH_ZERO,"PROPPATCH");
+
+   ONMREQ("PROPPATCH", prop_uri,
+	ne_propfind(r.ph,body,pgresults_invalid_sem, &r,ne_proppatch_method));
+
+   ne_propfind_destroy(r.ph);
+
+    return OK;
+}
+
+static void pg_results_liveunprop(void *userdata, const char *uri,
+		       const ne_prop_result_set *rset)
+{
+	int i;
+	const ne_status *status;
+
+	if (STATUS(207)) 
+		t_warning("PROPPATCH of live unprotected property got %d response, not 207", GETSTATUS);
+    	else //207
+	{
+		for (i=0;i<numlp_unprotect;i++)
+		{
+			status = ne_propset_status(rset, &live_prop_unprotect[i]);
+			if (status->code != 200)
+			t_warning("The status for setting property %s was %d and not 200 as expected",
+				live_prop_unprotect[i].name, status->code);
+		}
+	}
+}
+
+static int proppatch_liveunprotect(void)
+{
+//if you make changes here change the live_prop_unprotect as well
+    char * body = "<D:set><D:prop>"
+        	  "<D:getcontentlanguage>en-US</D:getcontentlanguage>"
+		  "<D:displayname>propchanged</D:displayname>"
+ 		  "</D:prop></D:set>";
+    struct results r = {0};
+    r.ph = ne_propfind_create(i_session,prop_uri, NE_DEPTH_ZERO,"PROPPATCH");
+
+   ONMREQ("PROPPATCH", prop_uri,
+	ne_propfind(r.ph,body,pg_results_liveunprop, &r,ne_proppatch_method));
+
+   ne_propfind_destroy(r.ph);
+
+    return OK;
+}
 /* Test ability to parse and persist Unicode characters above UXFFFF. */
 static int prophighunicode(void)
 {
@@ -469,49 +882,6 @@ static int prophighunicode(void)
 		  XML_DECL "<propertyupdate xmlns='DAV:'><set><prop>"
 		  "<high-unicode xmlns='" NS "'>&#65536;</high-unicode>"
 		  "</prop></set></propertyupdate>"));
-
-    return OK;
-}
-
-/* Test whether PROPPATCH is processed in document order (1/2). */
-static int propremoveset(void)
-{
-    PRECOND(prop_ok);
-
-    numprops = 1;
-    removedprops = 0;
-
-    propnames[0].nspace = NS;
-    propnames[0].name = "removeset";
-    values[0] = "y";
- 
-    CALL(do_patch("PROPPATCH remove then set",
-		  XML_DECL "<propertyupdate xmlns='DAV:'>"
-      "<remove><prop><removeset xmlns='" NS "'/></prop></remove>"
-      "<set><prop><removeset xmlns='" NS "'>x</removeset></prop></set>"
-      "<set><prop><removeset xmlns='" NS "'>y</removeset></prop></set>"
-      "</propertyupdate>"));
-
-    return OK;
-}
-
-/* Test whether PROPPATCH is processed in document order (2/2). */
-static int propsetremove(void)
-{
-    PRECOND(prop_ok);
-
-    numprops = 1;
-    removedprops = 0;
-
-    propnames[0].nspace = NS;
-    propnames[0].name = "removeset";
-    values[0] = NULL;
- 
-    CALL(do_patch("PROPPATCH remove then set",
-		  XML_DECL "<propertyupdate xmlns='DAV:'>"
-      "<set><prop><removeset xmlns='" NS "'>x</removeset></prop></set>"
-      "<remove><prop><removeset xmlns='" NS "'/></prop></remove>"
-      "</propertyupdate>"));
 
     return OK;
 }
@@ -548,14 +918,14 @@ static int propwformed(void)
                 "<%s xmlns='%s'/></prop></propfind>",
                 propnames[0].name, propnames[0].nspace);
 
-    return propfind_returns_wellformed("for property in namespace", body);
+    return propfind_returns_wellformed("for property in namespace", body,"PROPFIND");
 }
 
 static int propextended(void)
 {
     return propfind_returns_wellformed("with extended <propfind> element",
                                        XML_DECL "<propfind xmlns=\"DAV:\"><foobar/>"
-                                       "<allprop/></propfind>");
+                                       "<allprop/></propfind>","PROPFIND");
 }
 
 static const char *manyns[10] = {
@@ -589,6 +959,7 @@ static int propcleanup(void)
     return OK;
 }
 
+
 ne_test tests[] = 
 {
     INIT_TESTS,
@@ -596,21 +967,29 @@ ne_test tests[] =
     T(propfind_invalid), T(propfind_invalid2),
     T(propfind_d0),
     T(propinit),
+    T(propfind_d1),
+    T(proppatch_invalid_semantics),
     T(propset), T(propget),
+    T(propfind_empty),
+    T(propfind_allprop_include),
+    T(propfind_propname),
+    T(proppatch_liveunprotect),
     T(propextended),
 
+    T(propcopy), T(propget),
+    T(propcopy_unmapped), T(propget),
     T(propmove), T(propget),
     T(propdeletes), T(propget),
     T(propreplace), T(propget),
     T(propnullns), T(propget),
     T(prophighunicode), T(propget),
-    T(propremoveset), T(propget),
-    T(propsetremove), T(propget),
     T(propvalnspace), T(propwformed),
-    
+
     T(propinit),
 
     T(propmanyns), T(propget),
+    T(property_mixed),
+    T(propfind_mixed),
     T(propcleanup),
 
     FINISH_TESTS

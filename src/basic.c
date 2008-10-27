@@ -96,60 +96,7 @@ static int adv_options(void)
 
 #endif
 
-/* BINARYMODE() enables binary file I/O on cygwin. */
-#ifdef __CYGWIN__
-#define BINARYMODE(fd) do { setmode(fd, O_BINARY); } while (0)
-#else
-#define BINARYMODE(fd) if (0)
-#endif
-
-static char *create_temp(const char *contents)
-{
-    char tmp[256] = "/tmp/litmus-XXXXXX";
-    int fd;
-    size_t len = strlen(contents);
-    
-    fd = mkstemp(tmp);
-    BINARYMODE(fd);
-    if (write(fd, contents, len) != (ssize_t)len) {
-        close(fd);
-        return NULL;
-    }        
-    close(fd);
-
-    return ne_strdup(tmp);
-}
-
-static int compare_contents(const char *fn, const char *contents)
-{
-    int fd = open(fn, O_RDONLY | O_BINARY), ret;
-    char buffer[BUFSIZ];
-    ne_buffer *b = ne_buffer_create();
-    ssize_t bytes;
-
-    while ((bytes = read(fd, buffer, BUFSIZ)) > 0) {
-	ne_buffer_append(b, buffer, bytes);
-    }
-
-    close(fd);
-
-#define SvsS "%" NE_FMT_SIZE_T " vs %" NE_FMT_SIZE_T
-    if (strlen(b->data) != strlen(contents)) {
-	t_warning("length mismatch: " SvsS, strlen(b->data), strlen(contents));
-    }
-    if (strlen(b->data) != ne_buffer_size(b)) {
-	t_warning("buffer problem: " SvsS, 
-		  strlen(b->data), ne_buffer_size(b));
-    }
-#undef SvsS
-
-    ret = memcmp(b->data, contents, ne_buffer_size(b));
-    ne_buffer_destroy(b);
-
-    return ret;
-}
-
-static const char *test_contents = ""
+const char *test_contents = ""
 "This is\n"
 "a test file.\n"
 "for litmus\n"
@@ -182,7 +129,12 @@ static int do_put_get(const char *segment)
     ONV(ne_get(i_session, uri, fd),
 	("GET of `%s' failed: %s", uri, ne_get_error(i_session)));
     close(fd);
-
+   
+    if (STATUS(200)) {
+      t_warning("GET of new resource gave %d, should be 200",
+		GETSTATUS);
+    }
+    
     res = compare_contents(tmp, test_contents);
     if (res != OK) {
 	char cmd[1024];
@@ -266,6 +218,23 @@ static int delete_fragment(void)
 
 static char *coll_uri = NULL;
 
+static int mkcol_forbidden(void)
+{
+    char *uri;
+
+    uri = ne_concat(i_path, "../../coll/", NULL);
+    
+    ONN("MKCOL on root collection with user test1 succeeds",
+	ne_mkcol(i_session, uri) != NE_ERROR);
+    
+	if (STATUS(403)) {
+	t_warning("MKCOL of new collection gave %d, should be 403",
+		  GETSTATUS);
+	}
+
+	return OK;
+}
+
 static int mkcol(void)
 {
     char *uri;
@@ -274,6 +243,11 @@ static int mkcol(void)
     
     ONV(ne_mkcol(i_session, uri),
 	("MKCOL %s: %s", uri, ne_get_error(i_session)));
+	
+	if (STATUS(201)) {
+	t_warning("MKCOL of new collection gave %d, should be 201",
+		  GETSTATUS);
+	}
     
     coll_uri = uri; /* for subsequent tests. */
 
@@ -295,6 +269,25 @@ static int mkcol_again(void)
     return OK;
 }
 
+static int mkcol_percent_encoded(void)
+{
+    char *uri;
+    uri = ne_concat(i_path, "coll%20A/", NULL);
+    
+    ONV(ne_mkcol(i_session, uri),
+	    ("MKCOL %s: %s", uri, ne_get_error(i_session)));
+	
+	if (STATUS(201)) {
+    	t_warning("MKCOL of new collection gave %d, should be 201",GETSTATUS);
+	}
+    
+    uri=ne_concat(i_path,"coll A/",NULL); 
+    
+    ONN("MKCOL on existing collection succeeds",
+	    ne_mkcol(i_session, uri) != NE_ERROR);
+   return OK;
+}
+
 static int delete_coll(void)
 {
     PRECOND(coll_uri);
@@ -302,6 +295,11 @@ static int delete_coll(void)
     ONV(ne_delete(i_session, coll_uri),
 	("DELETE on collection `%s': %s", coll_uri, 
 	 ne_get_error(i_session)));
+
+	if (STATUS(204)) {
+	t_warning("DELETE of resource gave %d, should be 204",
+		  GETSTATUS);
+	}
 
     return OK;
 }
@@ -329,7 +327,7 @@ static int mkcol_with_body(void)
 {
     char *uri;
     ne_request *req;
-    static const char body[] = "afafafaf";
+    static const char body[] = "foo-bar-blah";
 
     uri = ne_concat(i_path, "mkcolbody", NULL);
 
@@ -355,6 +353,79 @@ static int mkcol_with_body(void)
     return OK;
 }
 
+static int check_last_modified(void)
+{
+    const char *uri, *res, *last_modified1, *last_modified2;
+    uri = ne_concat(i_path, "mycoll/", NULL);
+
+    ONV(ne_mkcol(i_session, uri),
+        ("MKCOL %s: %s", uri, ne_get_error(i_session)));
+    last_modified1=get_lastmodified(uri);
+    
+    sleep(2);
+
+    res=ne_concat(uri,"a",NULL);
+    ONV(ne_mkcol(i_session, res),
+        ("MKCOL %s: %s", res, ne_get_error(i_session)));
+      
+    last_modified2=get_lastmodified(uri);
+    
+    if(strcmp(last_modified1,last_modified2)==0)
+        t_warning("Collection changed. Last modified should have changed. %s , %s",last_modified1, last_modified2);
+    
+    return OK;
+}
+
+/*Changed content to chk the ETags*/
+const char *test_contents1 = ""
+"This is\n"
+"a test file.\n"
+"for litmus\n"
+"testing of etags.\n";
+
+const char *resETag;
+
+/*put a resource identified by the uri returns the etag of the resource.*/
+static int do_put_return_ETag(const char *segment, const char *contents)
+{
+    const char *fn, *uri;
+    int fd;
+    fn = create_temp(contents);
+
+    ONN("could not create temporary file", fn==NULL);
+
+    uri = ne_concat(i_path, segment, NULL);
+    fd = open(fn, O_RDONLY | O_BINARY);
+    ONV(ne_put(i_session, uri, fd),
+	("PUT of `%s' failed: %s", uri, ne_get_error(i_session)));
+    close(fd);
+
+    if (STATUS(201)) {
+	if(STATUS(204)){
+	t_warning("PUT of new resource gave %d, should be 201 or 204",
+		  GETSTATUS);
+	}
+    }
+   resETag = get_etag(uri);
+   unlink (fn);
+    return OK;
+
+}
+
+
+static int chk_ETag(void)
+{
+    const char *etag, *etag1;
+    do_put_return_ETag("resETag", "test_contents");
+    etag=resETag;
+    do_put_return_ETag("resETag", "test_contents1");
+    etag1=resETag;
+    if (strcmp(etag,etag1) ==0)
+	t_warning("resource changed. Etag should have changed. %s , %s",etag, etag1);
+
+    return OK;
+}
+
 ne_test tests[] = {
     INIT_TESTS,
 
@@ -367,10 +438,13 @@ ne_test tests[] = {
     T(delete_null),
     T(delete_fragment),
     T(mkcol),
+    T(mkcol_percent_encoded),
     T(mkcol_again),
     T(delete_coll),
     T(mkcol_no_parent),
     T(mkcol_with_body),
+    T(mkcol_forbidden),
+    T(chk_ETag),
 
     FINISH_TESTS
 };

@@ -1,6 +1,6 @@
 /* 
    HTTP Request Handling
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -72,11 +72,10 @@ struct ne_session_s {
     size_t numaddrs, curaddr;
 
     /* Settings */
-    int use_proxy; /* do we have a proxy server? */
-    int use_ssl; /* whether a secure connection is required */
-    int in_connect; /* doing a proxy CONNECT */
-
-    int flags[NE_SESSFLAG_LAST];
+    unsigned int use_proxy:1; /* do we have a proxy server? */
+    unsigned int no_persist:1; /* set to disable persistent connections */
+    unsigned int use_ssl:1; /* whether a secure connection is required */
+    unsigned int in_connect:1; /* doing a proxy CONNECT */
 
     ne_progress progress_cb;
     void *progress_ud;
@@ -113,9 +112,9 @@ struct ne_session_s {
 typedef int (*ne_push_fn)(void *userdata, const char *buf, size_t count);
 
 /* Do the SSL negotiation. */
-int ne__negotiate_ssl(ne_session *sess);
+int ne__negotiate_ssl(ne_request *req);
 
-/* Set the session error appropriate for SSL verification failures. */
-void ne__ssl_set_verify_err(ne_session *sess, int failures);
+/* Hack to fix ne_compress layer problems */
+void ne__reqhook_pre_send(ne_request *sess, ne_pre_send_fn fn, void *userdata);
 
 #endif /* HTTP_PRIVATE_H */

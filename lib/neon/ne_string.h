@@ -1,6 +1,6 @@
 /* 
    String utility functions
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -27,7 +27,7 @@
 
 #include <stdarg.h>
 
-NE_BEGIN_DECLS
+BEGIN_NEON_DECLS
 
 /* ne_token and ne_qtoken return the next token in *str between *str
  * and separator character 'sep' or the NUL terminator. ne_qtoken
@@ -122,7 +122,7 @@ strncpy(dest, src, n-1); dest[n-1] = '\0'; } while (0)
  * arguments, up to a terminating NULL. */
 char *ne_concat(const char *str, ...);
 
-#define NE_ASC2HEX(x) (((x) <= '9') ? ((x) - '0') : (ne_tolower((x)) + 10 - 'a'))
+#define NE_ASC2HEX(x) (((x) <= '9') ? ((x) - '0') : (tolower((x)) + 10 - 'a'))
 #define NE_HEX2ASC(x) ((char) ((x) > 9 ? ((x) - 10 + 'a') : ((x) + '0')))
 
 /* Wrapper for snprintf: always NUL-terminates returned buffer, and
@@ -134,23 +134,6 @@ size_t ne_snprintf(char *str, size_t size, const char *fmt, ...)
 size_t ne_vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
     ne_attribute((format(printf, 3, 0)));
 
-/* Implementations of strcasecmp and strncasecmp which behave as
- * defined by the ANSI C strcasecmp() and strncasecmp() when in the
- * POSIX locale; i.e. ignoring the process locale. */
-
-/* Compares 's1' and 's2', ignoring differences in case. */
-int ne_strcasecmp(const char *s1, const char *s2);
-/* Compares up to 'n' characters of 's1' and 's2', ignoring
- * differences in case. */
-int ne_strncasecmp(const char *s1, const char *s2, size_t n);
-
-/* Return lowercase 'c' as in POSIX locale; note difference from ANSI
- * C semantics as both the argument and return value are unsigned
- * char. */
-#define ne_tolower(c) (ne_tolower_array()[(unsigned char)c])
-
-const unsigned char *ne_tolower_array(void);
-
-NE_END_DECLS
+END_NEON_DECLS
 
 #endif /* NE_STRING_H */

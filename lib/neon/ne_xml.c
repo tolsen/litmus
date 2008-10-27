@@ -1,6 +1,6 @@
 /* 
    Wrapper interface to XML parser
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -31,7 +31,7 @@
 #include <strings.h>
 #endif
 
-#include "ne_internal.h"
+#include "ne_i18n.h"
 
 #include "ne_alloc.h"
 #include "ne_xml.h"
@@ -47,9 +47,9 @@
 #endif
 typedef XML_Char ne_xml_char;
 
-#if !defined(XML_MAJOR_VERSION)
-#define NEED_BOM_HANDLING
-#elif XML_MAJOR_VERSION < 2 && XML_MINOR_VERSION == 95 && XML_MICRO_VERSION < 2
+#if !defined(XML_MAJOR_VERSION) || (XML_MAJOR_VERSION < 2 \
+                                    && XML_MINOR_VERSION == 95 \
+                                    && XML_MICRO_VERSION < 2)
 #define NEED_BOM_HANDLING
 #endif
 
@@ -170,7 +170,7 @@ static xmlSAXHandler sax_handler = {
 };
 
 /* empty attributes array to mimic expat behaviour */
-static const char *const empty_atts[] = {NULL, NULL};
+static const char *empty_atts[] = {NULL, NULL};
 
 /* macro for determining the attributes array to pass */
 #define PASS_ATTS(atts) (atts ? (const char **)(atts) : empty_atts)

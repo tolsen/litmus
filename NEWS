@@ -1,10 +1,3 @@
-Changes in version 0.11:
-* New tests from Julian Reschke:
- - props: test for correct PROPPATCH propertyupdate evaluation order
- - copymove: test for "Depth: 0" COPY of collection 
-* Test URL is no longer path-escaped internally.
-* Update to neon 0.26.3.
-
 Changes in version 0.10.5:
 * Add another test for handling of unknown state tokens in an If: header.
 * Update to neon 0.25.4.

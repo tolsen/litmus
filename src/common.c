@@ -213,6 +213,8 @@ int init(void)
 	i_path = ne_concat(u.path, "/", NULL);
     }
 
+    i_path = ne_path_escape(i_path);
+    
     if (n > 2) {
 	i_username = test_argv[optind+1];
 	i_password = test_argv[optind+2];
@@ -339,9 +341,21 @@ int upload_foo(const char *path)
     int ret;
     /* i_foo_fd is rewound automagically by ne_request.c */
     ret = ne_put(i_session, uri, i_foo_fd);
-    free(uri);
     if (ret)
-	t_context("PUT of `%s': %s", uri, ne_get_error(i_session));
+	t_context("PUT of '%s': %s", uri, ne_get_error(i_session));
+    free(uri);
+    return ret;
+}
+
+int upload_foo2(const char *path)
+{
+    char *uri = ne_concat(i_path, path, NULL);
+    int ret;
+    /* i_foo_fd is rewound automagically by ne_request.c */
+    ret = ne_put(i_session2, uri, i_foo_fd);
+    if (ret)
+	t_context("PUT of '%s': %s", uri, ne_get_error(i_session2));
+    free(uri);
     return ret;
 }
 
@@ -362,6 +376,20 @@ int options(void)
     return OK;
 }
 
+char *get_lastmodified(const char *path)
+{
+    ne_request *req = ne_request_create(i_session, "HEAD", path);
+    char *lastmodified = NULL;
+
+    if (ne_request_dispatch(req) == NE_OK && ne_get_status(req)->code == 200) {
+        const char *value = ne_get_response_header(req, "Last-Modified");
+        if (value) lastmodified = ne_strdup(value);
+    }
+
+    ne_request_destroy(req);
+    return lastmodified;
+}
+
 char *get_etag(const char *path)
 {
     ne_request *req = ne_request_create(i_session, "HEAD", path);
@@ -374,4 +402,50 @@ char *get_etag(const char *path)
 
     ne_request_destroy(req);
     return etag;
+}
+
+char *create_temp(const char *contents)
+{
+    char tmp[256] = "/tmp/litmus-XXXXXX";
+    int fd;
+    size_t len = strlen(contents);
+    
+    fd = mkstemp(tmp);
+    BINARYMODE(fd);
+    if (write(fd, contents, len) != (ssize_t)len) {
+        close(fd);
+        return NULL;
+    }        
+    close(fd);
+
+    return ne_strdup(tmp);
+}
+
+int compare_contents(const char *fn, const char *contents)
+{
+    int fd = open(fn, O_RDONLY | O_BINARY), ret;
+    char buffer[BUFSIZ];
+    ne_buffer *b = ne_buffer_create();
+    ssize_t bytes;
+
+    while ((bytes = read(fd, buffer, BUFSIZ)) > 0) {
+	ne_buffer_append(b, buffer, bytes);
+    }
+
+    close(fd);
+
+#define SvsS "%" NE_FMT_SIZE_T " vs %" NE_FMT_SIZE_T
+    if (strlen(b->data) != strlen(contents)) {
+	t_warning("length mismatch: " SvsS, strlen(b->data), strlen(contents));
+    }
+    if (strlen(b->data) != ne_buffer_size(b)) {
+	t_warning("buffer problem: " SvsS, 
+		  strlen(b->data), ne_buffer_size(b));
+    }
+#undef SvsS
+
+    ret = memcmp(b->data, contents, ne_buffer_size(b));
+    ne_buffer_destroy(b);
+
+    return ret;
 }

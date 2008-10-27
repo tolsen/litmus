@@ -21,8 +21,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "common.h"
-
 #ifndef __GT_FILE
 # define __GT_FILE 0
 #endif

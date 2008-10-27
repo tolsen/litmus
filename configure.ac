@@ -1,6 +1,6 @@
 dnl autoconf script for litmus
 
-AC_INIT(litmus, 0.11, litmus@webdav.org)
+AC_INIT(litmus, 0.10.5, litmus@webdav.org)
 
 AC_PREREQ(2.59)
 
@@ -18,9 +18,9 @@ AC_SET_MAKE
 AC_PROG_INSTALL
 
 dnl List of tests
-AC_SUBST([TESTS], ["basic copymove props locks http"])
+AC_SUBST([TESTS], ["basic copymove props http bind version acl principal locks "])
 
-NE_REQUIRE_VERSIONS([0], [25 26])
+NE_REQUIRE_VERSIONS([0], [25])
 NEON_WITHOUT_ZLIB
 NEON_WITHOUT_ACL
 NEON_TEST

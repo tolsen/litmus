@@ -1,6 +1,6 @@
 /* 
    HTTP/1.1 methods
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -26,7 +26,7 @@
 
 #include "ne_request.h"
 
-NE_BEGIN_DECLS
+BEGIN_NEON_DECLS
 
 /* Perform a GET request on resource at 'path', writing the entity
  * body which is returned to 'fd'. */
@@ -61,6 +61,16 @@ int ne_move(ne_session *sess, int overwrite,
 
 /* Delete resource at 'path'. */
 int ne_delete(ne_session *sess, const char *path);
+
+// SM 
+
+/* Bind resource to path */
+//int ne_bind(ne_session, const char *resource, const char *path) 
+/*Unbind resource at path */ 
+int ne_unbind(ne_session *sess, const char *path);
+
+// SM
+
 /* Create a collection at 'path', which MUST have a trailing slash. */
 int ne_mkcol(ne_session *sess, const char *path);
 
@@ -120,21 +130,9 @@ typedef struct {
 int ne_get_range(ne_session *sess, const char *path, 
 		 ne_content_range *range, int fd);
 
-#ifdef NE_LFS
-typedef struct {
-    off64_t start, end, total;
-} ne_content_range64;
-
-/* Alternative version of ne_get_range for LFS systems; takes 64-bit
- * range offsets in *range but is otherwise identical to
- * ne_get_range. */
-int ne_get_range64(ne_session *sess, const char *path, 
-                   ne_content_range64 *range, int fd);
-#endif
-
 /* Post using buffer as request-body: stream response into f */
 int ne_post(ne_session *sess, const char *path, int fd, const char *buffer);
 
-NE_END_DECLS
+END_NEON_DECLS
 
 #endif /* NE_BASIC_H */

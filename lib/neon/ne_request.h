@@ -1,6 +1,6 @@
 /* 
    HTTP Request Handling
-   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -26,7 +26,7 @@
 #include "ne_string.h" /* For ne_buffer */
 #include "ne_session.h"
 
-NE_BEGIN_DECLS
+BEGIN_NEON_DECLS
 
 #define NE_OK (0) /* Success */
 #define NE_ERROR (1) /* Generic error; use ne_get_error(session) for message */
@@ -223,33 +223,21 @@ int ne_discard_response(ne_request *req);
  * given file descriptor.  Returns NE_ERROR on error. */
 int ne_read_response_to_fd(ne_request *req, int fd);
 
-/* Defined request flags: */
-typedef enum ne_request_flag_e {
-    NE_REQFLAG_EXPECT100 = 0, /* enable this flag to enable use of the
-                               * "Expect: 100-continue" for the
-                               * request. */
-
-    NE_REQFLAG_IDEMPOTENT, /* disable this flag if the request uses a
-                            * non-idempotent method such as POST. */
-
-    NE_REQFLAG_LAST /* enum sentinel value */
-} ne_request_flag;
-
-/* Set a new value for a particular request flag. */
-void ne_set_request_flag(ne_request *req, ne_request_flag flag, int value);
-
-/* Return 0 if the given flag is not set, >0 it is set, or -1 if the
- * flag is not supported. */
-int ne_get_request_flag(ne_request *req, ne_request_flag flag);
+/* If 'flag' is non-zer, enable the HTTP/1.1 "Expect: 100-continue"
+ * feature for the request, which allows the server to send an error
+ * response before the request body is sent.  This should only be used
+ * if the server is known to support the feature (not all HTTP/1.1
+ * servers do); the request will time out and fail otherwise. */
+void ne_set_request_expect100(ne_request *req, int flag);
 
 /**** Request hooks handling *****/
 
 typedef void (*ne_free_hooks)(void *cookie);
 
-/* Hook called when a request is created; passed the request method,
- * and the string used as the Request-URI (note that this may be a
- * absolute URI if a proxy is in use, an absolute path, a "*",
- * etc). */
+/* Hook called when a create is created; passed the request method,
+ * and the string used as the Request-URI (which may be an abs_path,
+ * or an absoluteURI, depending on whether an HTTP proxy is in
+ * use).  */
 typedef void (*ne_create_request_fn)(ne_request *req, void *userdata,
 				     const char *method, const char *requri);
 void ne_hook_create_request(ne_session *sess, 
@@ -284,27 +272,11 @@ typedef void (*ne_destroy_sess_fn)(void *userdata);
 void ne_hook_destroy_session(ne_session *sess,
 			     ne_destroy_sess_fn fn, void *userdata);
 
-/* The ne_unhook_* functions remove a hook registered with the given
- * session.  If a hook is found which was registered with a given
- * function 'fn', and userdata pointer 'userdata', then it will be
- * removed from the hooks list.
- *
- * It is unsafe to use any of these functions from a hook function to
- * unregister itself, except for ne_unhook_destroy_request. */
-void ne_unhook_create_request(ne_session *sess, 
-                              ne_create_request_fn fn, void *userdata);
-void ne_unhook_pre_send(ne_session *sess, ne_pre_send_fn fn, void *userdata);
-void ne_unhook_post_send(ne_session *sess, ne_post_send_fn fn, void *userdata);
-void ne_unhook_destroy_request(ne_session *sess,
-                               ne_destroy_req_fn fn, void *userdata);
-void ne_unhook_destroy_session(ne_session *sess,
-                               ne_destroy_sess_fn fn, void *userdata);
-
 /* Store an opaque context for the request, 'priv' is returned by a
  * call to ne_request_get_private with the same ID. */
 void ne_set_request_private(ne_request *req, const char *id, void *priv);
 void *ne_get_request_private(ne_request *req, const char *id);
 
-NE_END_DECLS
+END_NEON_DECLS
 
 #endif /* NE_REQUEST_H */
