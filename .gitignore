@@ -1,0 +1,17 @@
+*.o
+*.a
+*.log
+*.status
+Makefile
+acl
+basic
+bind
+config.h
+copymove
+http
+lib/neon/Makefile
+litmus
+locks
+principal
+props
+version
