@@ -15,3 +15,4 @@ locks
 principal
 props
 version
+.lime-config-generated.mk
