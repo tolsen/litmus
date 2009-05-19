@@ -440,7 +440,7 @@ static int newauth(void *ud, const char *realm, int attempt,
 {
 	//hardcoding for now, read it from the newuser file in the limestone folder.
     strcpy(username, i_newuser);
-    strcpy(password, "test2");
+    strcpy(password, "qwerty");
     return attempt;
 }
 
