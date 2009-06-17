@@ -572,8 +572,8 @@ static int propnullns(void)
 static int numlpinc=2;
 static int incliveprops=0;
 static const ne_propname live_props_inc[2] = {
-	{ "DAV:", "quota-available-bytes"},
-	{ "DAV:", "quota-used-bytes"}
+	{ "DAV:", "acl"},
+	{ "DAV:", "resource-id"}
 };
 /*
 internal function to compare returned and stored propnames
@@ -628,8 +628,8 @@ static int propfind_allprop_include(void)
     //if you change this change in live_props_inc as well.
     sprintf(body,  "<D:allprop />"
                    "<D:include>"
-                   "<D:quota-available-bytes />"
-                   "<D:quota-used-bytes />"
+                   "<D:acl />"
+                   "<D:resource-id />"
                    "</D:include>");
 
 	struct results r = {0};
