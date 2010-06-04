@@ -434,7 +434,7 @@ static int notowner_lock(void)
 
 //TODO: currently hardcoding the user.
 //will have to change after decision is taken on how user would be created.
-const char *i_newuser="test2";
+const char *i_newuser="test2@limebits.com";
 static int newauth(void *ud, const char *realm, int attempt,
 		char *username, char *password)
 {
