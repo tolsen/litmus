@@ -44,6 +44,11 @@ username/password.  For instance:
      litmus http://dav.server.url/path/
  or  litmus http://dav.server.url/path/ jim 2518
 
+you can also use docker to build and run litmus:
+
+     docker build -t litmus .
+     docker run litmus http://dav.server.url/path/ jim 2518
+
 litmus is licensed under the GNU GPL; see COPYING for full details.
 litmus is (C) 2001-2005 Joe Orton
 
