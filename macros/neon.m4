@@ -1,4 +1,4 @@
-# Copyright (C) 1998-2005 Joe Orton <joe@manyfish.co.uk>    -*- autoconf -*-
+# Copyright (C) 1998-2010 Joe Orton <joe@manyfish.co.uk>    -*- autoconf -*-
 # Copyright (C) 2004 Aleix Conchillo Flaque <aleix@member.fsf.org>
 #
 # This file is free software; you may copy and/or distribute it with
@@ -14,7 +14,7 @@
 
 # This file is part of the neon HTTP/WebDAV client library.
 # See http://www.webdav.org/neon/ for the latest version. 
-# Please send any feedback to <neon@webdav.org>
+# Please send any feedback to <neon@lists.manyfish.co.uk>
 
 #
 # Usage:
@@ -136,21 +136,25 @@ AC_DEFUN([NE_VERSIONS_BUNDLED], [
 
 # Define the current versions.
 NE_VERSION_MAJOR=0
-NE_VERSION_MINOR=25
-NE_VERSION_PATCH=4
+NE_VERSION_MINOR=29
+NE_VERSION_PATCH=6
 NE_VERSION_TAG=
 
-# libtool library interface versioning.  Release policy dictates that
-# for neon 0.x.y, each x brings an incompatible interface change, and
-# each y brings no interface change, and since this policy has been
-# followed since 0.1, x == CURRENT, y == RELEASE, 0 == AGE.  For
-# 1.x.y, this will become N + x == CURRENT, y == RELEASE, x == AGE,
-# where N is constant (and equal to CURRENT + 1 from the final 0.x
-# release)
-NEON_INTERFACE_VERSION="${NE_VERSION_MINOR}:${NE_VERSION_PATCH}:0"
+# 0.29.x is backwards-compatible to 0.27.x, so AGE=2
+NE_LIBTOOL_VERSINFO="29:${NE_VERSION_PATCH}:2"
 
 NE_DEFINE_VERSIONS
 
+])
+
+dnl Adds an ABI variation tag which will be added to the SONAME of
+dnl a shared library.  e.g. NE_ADD_ABITAG(FOO)
+AC_DEFUN([NE_ADD_ABITAG], [
+if test "x${NE_LIBTOOL_RELEASE}y" = "xy"; then
+   NE_LIBTOOL_RELEASE="$1"
+else
+   NE_LIBTOOL_RELEASE="${NE_LIBTOOL_RELEASE}-$1"
+fi
 ])
 
 dnl Define the minimum required versions, usage:
@@ -218,7 +222,7 @@ else
 fi
 ])
 
-dnl enable support for feature $1 with define $2, message $2
+dnl enable support for feature $1 with define NE_HAVE_$1, message $2
 AC_DEFUN([NE_ENABLE_SUPPORT], [
 NE_FLAG_$1=yes
 AC_SUBST(NE_FLAG_$1)
@@ -230,7 +234,7 @@ m4_if([$2], [],
   AC_MSG_NOTICE([$2])])
 ])
 
-dnl Disable support for feature $1 with define $1, message $3
+dnl Disable support for feature $1, giving message $2
 AC_DEFUN([NE_DISABLE_SUPPORT], [
 NE_FLAG_$1=no
 AC_SUBST(NE_FLAG_$1)
@@ -259,8 +263,15 @@ NEON_CHECK_VERSION([
     NEON_CHECK_SUPPORT([zlib], [ZLIB], [zlib])
     NEON_CHECK_SUPPORT([ipv6], [IPV6], [IPv6])
     NEON_CHECK_SUPPORT([lfs], [LFS], [LFS])
-    NEON_CHECK_SUPPORT([socks], [SOCKS], [SOCKSv5])
+    NEON_CHECK_SUPPORT([ts_ssl], [TS_SSL], [thread-safe SSL])
     neon_got_library=yes
+    if test $NE_FLAG_LFS = yes; then
+       NEON_FORMAT(off64_t)
+       AC_DEFINE_UNQUOTED([NE_FMT_NE_OFF_T], [NE_FMT_OFF64_T], 
+            [Define to be printf format string for ne_off_t])
+    else
+       AC_DEFINE_UNQUOTED([NE_FMT_NE_OFF_T], [NE_FMT_OFF_T])
+    fi
 ], [neon_got_library=no])
 ])
 
@@ -349,6 +360,8 @@ dnl If link never succeeds, run `actions-if-not-found', if given, else
 dnl give an error and fail configure.
 AC_DEFUN([NE_SEARCH_LIBS], [
 
+AC_REQUIRE([NE_CHECK_OS])
+
 AC_CACHE_CHECK([for library containing $1], [ne_cv_libsfor_$1], [
 AC_LINK_IFELSE(
   [AC_LANG_PROGRAM([], [[$1();]])], 
@@ -356,12 +369,18 @@ AC_LINK_IFELSE(
 ne_sl_save_LIBS=$LIBS
 ne_cv_libsfor_$1="not found"
 for lib in $2; do
+    # The w32api libraries link using the stdcall calling convention.
+    case ${lib}-${ne_cv_os_uname} in
+    ws2_32-MINGW*) ne__code="__stdcall $1();" ;;
+    *) ne__code="$1();" ;;
+    esac
+
     LIBS="$ne_sl_save_LIBS -l$lib $NEON_LIBS"
-    AC_LINK_IFELSE([AC_LANG_PROGRAM([], [[$1();]])],
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([], [$ne__code])],
                    [ne_cv_libsfor_$1="-l$lib"; break])
     m4_if($3, [], [], dnl If $3 is specified, then...
               [LIBS="$ne_sl_save_LIBS -l$lib $3 $NEON_LIBS"
-               AC_LINK_IFELSE([AC_LANG_PROGRAM([], [[$1();]])], 
+               AC_LINK_IFELSE([AC_LANG_PROGRAM([], [$ne__code])], 
                               [ne_cv_libsfor_$1="-l$lib $3"; break])])
 done
 LIBS=$ne_sl_save_LIBS])])
@@ -393,14 +412,13 @@ else
 fi
 ])
 
-AC_DEFUN([NE_MACOSX], [
+AC_DEFUN([NE_CHECK_OS], [
 # Check for Darwin, which needs extra cpp and linker flags.
-AC_CACHE_CHECK([for Darwin], ne_cv_os_macosx, [
-case `uname -s 2>/dev/null` in
-Darwin) ne_cv_os_macosx=yes ;;
-*) ne_cv_os_macosx=no ;;
-esac])
-if test $ne_cv_os_macosx = yes; then
+AC_CACHE_CHECK([for uname], ne_cv_os_uname, [
+ ne_cv_os_uname=`uname -s 2>/dev/null`
+])
+
+if test "$ne_cv_os_uname" = "Darwin"; then
   CPPFLAGS="$CPPFLAGS -no-cpp-precomp"
   LDFLAGS="$LDFLAGS -flat_namespace" 
   # poll has various issues in various Darwin releases
@@ -415,14 +433,16 @@ AC_DEFUN([NEON_COMMON_CHECKS], [
 # These checks are done whether or not the bundled neon build
 # is used.
 
+ifdef([AC_USE_SYSTEM_EXTENSIONS], 
+[AC_USE_SYSTEM_EXTENSIONS],
+[AC_ISC_POSIX])
 AC_REQUIRE([AC_PROG_CC])
-AC_REQUIRE([AC_ISC_POSIX])
 AC_REQUIRE([AC_C_INLINE])
 AC_REQUIRE([AC_C_CONST])
 AC_REQUIRE([AC_TYPE_SIZE_T])
 AC_REQUIRE([AC_TYPE_OFF_T])
 
-AC_REQUIRE([NE_MACOSX])
+AC_REQUIRE([NE_CHECK_OS])
 
 AC_REQUIRE([AC_PROG_MAKE_SET])
 
@@ -486,7 +506,14 @@ else
          [LFS support omitted: 64-bit support functions not found])
      fi], [NE_DISABLE_SUPPORT(LFS, [LFS support omitted: off64_t type not found])])
    CPPFLAGS=$ne_save_CPPFLAGS
-fi])
+fi
+if test "$NE_FLAG_LFS" = "yes"; then
+   AC_DEFINE_UNQUOTED([NE_FMT_NE_OFF_T], [NE_FMT_OFF64_T], 
+                      [Define to be printf format string for ne_off_t])
+else
+   AC_DEFINE_UNQUOTED([NE_FMT_NE_OFF_T], [NE_FMT_OFF_T])
+fi
+])
 
 dnl NEON_FORMAT(TYPE[, HEADERS[, [SPECIFIER]])
 dnl
@@ -499,7 +526,8 @@ AC_DEFUN([NEON_FORMAT], [
 
 AC_REQUIRE([NEON_FORMAT_PREP])
 
-AC_CHECK_SIZEOF($1, [$2])
+AC_CHECK_SIZEOF($1,, [AC_INCLUDES_DEFAULT
+$2])
 
 dnl Work out which specifier character to use
 m4_ifdef([ne_spec], [m4_undefine([ne_spec])])
@@ -559,8 +587,9 @@ AC_REQUIRE([AC_C_BIGENDIAN])
 dnl Is strerror_r present; if so, which variant
 AC_REQUIRE([AC_FUNC_STRERROR_R])
 
-AC_CHECK_HEADERS([sys/time.h limits.h sys/select.h arpa/inet.h \
-	signal.h sys/socket.h netinet/in.h netinet/tcp.h netdb.h sys/poll.h],,,
+AC_CHECK_HEADERS([sys/time.h limits.h sys/select.h arpa/inet.h libintl.h \
+	signal.h sys/socket.h netinet/in.h netinet/tcp.h netdb.h sys/poll.h \
+	sys/limits.h fcntl.h iconv.h],,,
 [AC_INCLUDES_DEFAULT
 /* netinet/tcp.h requires netinet/in.h on some platforms. */
 #ifdef HAVE_NETINET_IN_H
@@ -569,12 +598,22 @@ AC_CHECK_HEADERS([sys/time.h limits.h sys/select.h arpa/inet.h \
 
 AC_REQUIRE([NE_SNPRINTF])
 
+AC_CACHE_CHECK([for timezone global], ne_cv_cc_timezone, [
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <sys/types.h>
+#include <time.h>]],
+[[time_t t = 0 - timezone; timezone = 1;]])],
+ne_cv_cc_timezone=yes, ne_cv_cc_timezone=no)])
+
+if test "$ne_cv_cc_timezone" = "yes"; then
+   AC_DEFINE([HAVE_TIMEZONE], 1, [Define if the timezone global is available])
+fi
+
 dnl Check for large file support
 NE_LARGEFILE
 
 AC_REPLACE_FUNCS(strcasecmp)
 
-AC_CHECK_FUNCS(signal setvbuf setsockopt stpcpy poll)
+AC_CHECK_FUNCS(signal setvbuf setsockopt stpcpy poll fcntl getsockopt)
 
 if test "x${ac_cv_func_poll}${ac_cv_header_sys_poll_h}y" = "xyesyesy"; then
   AC_DEFINE([NE_USE_POLL], 1, [Define if poll() should be used])
@@ -591,7 +630,8 @@ char *stpcpy(char *, const char *);
 
 # Unixware 7 can only link gethostbyname with -lnsl -lsocket
 # Pick up -lsocket first, then the gethostbyname check will work.
-NE_SEARCH_LIBS(socket, socket inet ws2_32)
+# Haiku requires -lnetwork for socket functions.
+NE_SEARCH_LIBS(socket, socket inet ws2_32 network)
 
 # Enable getaddrinfo support if it, gai_strerror and inet_ntop are
 # all available.
@@ -604,7 +644,8 @@ NE_SEARCH_LIBS(getaddrinfo, nsl,,
       AC_MSG_NOTICE([getaddrinfo support disabled on HP-UX 11.0x/11.1x]) ;;
    *)
      ne_enable_gai=yes
-     NE_CHECK_FUNCS(gai_strerror inet_ntop,,[ne_enable_gai=no; break]) ;;
+     NE_CHECK_FUNCS(gai_strerror getnameinfo inet_ntop inet_pton,,
+                    [ne_enable_gai=no; break]) ;;
    esac
 ])
 
@@ -612,7 +653,8 @@ if test $ne_enable_gai = yes; then
    NE_ENABLE_SUPPORT(IPV6, [IPv6 support is enabled])
    AC_DEFINE(USE_GETADDRINFO, 1, [Define if getaddrinfo() should be used])
    AC_CACHE_CHECK([for working AI_ADDRCONFIG], [ne_cv_gai_addrconfig], [
-   AC_RUN_IFELSE([AC_LANG_PROGRAM([#include <netdb.h>],
+   AC_RUN_IFELSE([AC_LANG_PROGRAM([#include <netdb.h>
+#include <stdlib.h>],
 [struct addrinfo hints = {0}, *result;
 hints.ai_flags = AI_ADDRCONFIG;
 if (getaddrinfo("localhost", NULL, &hints, &result) != 0) return 1;])],
@@ -624,15 +666,15 @@ else
    # Checks for non-getaddrinfo() based resolver interfaces.
    # QNX has gethostbyname in -lsocket. BeOS only has it in -lbind.
    # CygWin/Winsock2 has it in -lws2_32, allegedly.
-   NE_SEARCH_LIBS(gethostbyname, socket nsl bind)
+   # Haiku requires -lnetwork for socket functions.
+   NE_SEARCH_LIBS(gethostbyname, socket nsl bind ws2_32 network)
    NE_SEARCH_LIBS(hstrerror, resolv,,[:])
    NE_CHECK_FUNCS(hstrerror)
    # Older Unixes don't declare h_errno.
-   AC_CHECK_DECLS(h_errno,,,[#define _XOPEN_SOURCE_EXTENDED 1
-#include <netdb.h>])
+   AC_CHECK_DECLS(h_errno,,,[#include <netdb.h>])
    AC_CHECK_TYPE(in_addr_t,,[
      AC_DEFINE([in_addr_t], [unsigned int], 
-                            [Define if in_addr_t is not availale])], [
+                            [Define if in_addr_t is not available])], [
 #ifdef HAVE_SYS_TYPES_H
 # include <sys/types.h>
 #endif
@@ -642,10 +684,22 @@ else
 ])
 fi
 
+AC_CHECK_TYPES(socklen_t,,
+# Linux accept(2) says this should be size_t for SunOS 5... gah.
+[AC_DEFINE([socklen_t], [int], 
+                        [Define if socklen_t is not available])],[
+#ifdef HAVE_SYS_TYPES_H
+# include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_SOCKET_H
+# include <sys/socket.h>
+#endif
+])
+
 AC_CHECK_MEMBERS([struct tm.tm_gmtoff, struct tm.__tm_gmtoff],,,
   [#include <time.h>])
 
-if test $ac_cv_member_struct_tm_tm_gmtoff$ac_cv_member_struct_tm___tm_gmtoff = nono; then
+if test ${ac_cv_member_struct_tm_tm_gmtoff}${ac_cv_member_struct_tm___tm_gmtoff}${ne_cv_cc_timezone} = nonono; then
   AC_MSG_WARN([no timezone handling in date parsing on this platform])
 fi
 
@@ -659,12 +713,12 @@ if test "x$neon_no_acl" = "xyes"; then
     AC_MSG_RESULT(no)
 else
     AC_MSG_RESULT(yes)
-    NEON_EXTRAOBJS="$NEON_EXTRAOBJS ne_acl"
+    NEON_EXTRAOBJS="$NEON_EXTRAOBJS ne_oldacl ne_acl3744"
 fi
 
 NEON_SSL()
-NEON_SOCKS()
 NEON_GSSAPI()
+NEON_LIBPROXY()
 
 AC_SUBST(NEON_CFLAGS)
 AC_SUBST(NEON_LIBS)
@@ -721,6 +775,7 @@ if test "x$neon_no_webdav" = "xyes"; then
   # No WebDAV support
   NEONOBJS="$NEONOBJS \$(NEON_BASEOBJS)"
   NE_DISABLE_SUPPORT(DAV, [WebDAV support is not enabled])
+  NE_ADD_ABITAG(NODAV)
 else
   # WebDAV support
   NEONOBJS="$NEONOBJS \$(NEON_DAVOBJS)"
@@ -798,19 +853,21 @@ good
 dnl Less noisy replacement for PKG_CHECK_MODULES
 AC_DEFUN([NE_PKG_CONFIG], [
 
+m4_define([ne_cvar], m4_translit(ne_cv_pkg_[$2], [.-], [__]))dnl
+
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 if test "$PKG_CONFIG" = "no"; then
    : Not using pkg-config
    $4
 else
-   AC_CACHE_CHECK([for $2 pkg-config data], ne_cv_pkg_$2,
+   AC_CACHE_CHECK([for $2 pkg-config data], ne_cvar,
      [if $PKG_CONFIG $2; then
-        ne_cv_pkg_$2=yes
+        ne_cvar=yes
       else
-        ne_cv_pkg_$2=no
+        ne_cvar=no
       fi])
 
-   if test "$ne_cv_pkg_$2" = "yes"; then
+   if test "$ne_cvar" = "yes"; then
       $1_CFLAGS=`$PKG_CONFIG --cflags $2`
       $1_LIBS=`$PKG_CONFIG --libs $2`
       : Using provided pkg-config data
@@ -819,7 +876,10 @@ else
       : No pkg-config for $2 provided
       $4
    fi
-fi])
+fi
+
+m4_undefine([ne_cvar])
+])
 
 dnl Check for an SSL library (GNU TLS or OpenSSL)
 AC_DEFUN([NEON_SSL], [
@@ -831,6 +891,10 @@ AC_ARG_WITH(ssl,
 AC_ARG_WITH(egd,
 [[  --with-egd[=PATH]       enable EGD support [using EGD socket at PATH]]])
 
+AC_ARG_WITH(pakchois,
+            AS_HELP_STRING([--without-pakchois],
+                           [disable support for PKCS#11 using pakchois]))
+
 case $with_ssl in
 /*)
    AC_MSG_NOTICE([to use SSL libraries in non-standard locations, try --with-ssl --with-libs=$with_ssl])
@@ -841,9 +905,9 @@ yes|openssl)
     [AC_MSG_NOTICE(using SSL library configuration from pkg-config)
      CPPFLAGS="$CPPFLAGS ${NE_SSL_CFLAGS}"
      NEON_LIBS="$NEON_LIBS ${NE_SSL_LIBS}"],
-    [# libcrypto may require -ldl if using the OpenSSL ENGINE branch
+    [# Either OpenSSL library may require -ldl if built with dynamic engine support
      NE_SEARCH_LIBS(RSA_new, crypto, -ldl)
-     NE_SEARCH_LIBS(SSL_library_init, ssl)])
+     NE_SEARCH_LIBS(SSL_library_init, ssl, -ldl)])
 
    AC_CHECK_HEADERS(openssl/ssl.h openssl/opensslv.h,,
    [AC_MSG_ERROR([OpenSSL headers not found, cannot enable SSL support])])
@@ -853,6 +917,7 @@ yes|openssl)
    if test "$ne_cv_lib_ssl097" = "yes"; then
       AC_MSG_NOTICE([OpenSSL >= 0.9.7; EGD support not needed in neon])
       NE_ENABLE_SUPPORT(SSL, [SSL support enabled, using OpenSSL (0.9.7 or later)])
+      NE_CHECK_FUNCS(CRYPTO_set_idptr_callback SSL_SESSION_cmp)
    else
       # Fail if OpenSSL is older than 0.9.6
       NE_CHECK_OPENSSLVER(ne_cv_lib_ssl096, 0.9.6, 0x00906000L)
@@ -883,41 +948,108 @@ yes|openssl)
 
    AC_DEFINE([HAVE_OPENSSL], 1, [Define if OpenSSL support is enabled])
    NEON_EXTRAOBJS="$NEON_EXTRAOBJS ne_openssl"
+
+   AC_DEFINE([HAVE_NTLM], 1, [Define if NTLM is supported])
    ;;
 gnutls)
-   AC_MSG_ERROR([GNU TLS support is not yet complete])
+   NE_PKG_CONFIG(NE_SSL, gnutls,
+     [AC_MSG_NOTICE(using GnuTLS configuration from pkg-config)
+      CPPFLAGS="$CPPFLAGS ${NE_SSL_CFLAGS}"
+      NEON_LIBS="$NEON_LIBS ${NE_SSL_LIBS}"
 
-   AC_PATH_PROG(GNUTLS_CONFIG, libgnutls-config, no)
+      ne_gnutls_ver=`$PKG_CONFIG --modversion gnutls`
+     ], [
+      # Fall back on libgnutls-config script
+      AC_PATH_PROG(GNUTLS_CONFIG, libgnutls-config, no)
 
-   if test "$GNUTLS_CONFIG" = "no"; then
-     AC_MSG_ERROR([could not find libgnutls-config in \$PATH])
-   fi
+      if test "$GNUTLS_CONFIG" = "no"; then
+        AC_MSG_ERROR([could not find libgnutls-config in \$PATH])
+      fi
 
-   ne_gnutls_ver=`$GNUTLS_CONFIG --version`
-   case $ne_gnutls_ver in
-   1.0.?|1.0.1?|1.0.20|1.0.21) 
-      AC_MSG_ERROR([GNU TLS version $ne_gnutls_ver is too old -- 1.0.22 or later required]) ;;
-   1.*) ;;
-   *) AC_MSG_ERROR([GNU TLS version $ne_gnutls_ver is not supported]) ;;
-   esac
+      CPPFLAGS="$CPPFLAGS `$GNUTLS_CONFIG --cflags`"
+      NEON_LIBS="$NEON_LIBS `$GNUTLS_CONFIG --libs`"
 
-   CPPFLAGS="$CPPFLAGS `$GNUTLS_CONFIG --cflags`"
+      ne_gnutls_ver=`$GNUTLS_CONFIG --version`
+     ])
 
    AC_CHECK_HEADER([gnutls/gnutls.h],,
       [AC_MSG_ERROR([could not find gnutls/gnutls.h in include path])])
 
    NE_ENABLE_SUPPORT(SSL, [SSL support enabled, using GnuTLS $ne_gnutls_ver])
    NEON_EXTRAOBJS="$NEON_EXTRAOBJS ne_gnutls"
-   NEON_LIBS="$NEON_LIBS `$GNUTLS_CONFIG --libs`"
    AC_DEFINE([HAVE_GNUTLS], 1, [Define if GnuTLS support is enabled])
+
+   # Check for functions in later releases
+   NE_CHECK_FUNCS([gnutls_session_get_data2 gnutls_x509_dn_get_rdn_ava \
+                  gnutls_sign_callback_set \
+                  gnutls_certificate_get_x509_cas \
+                  gnutls_certificate_verify_peers2])
+
+   # fail if gnutls_certificate_verify_peers2 is not found
+   if test x${ac_cv_func_gnutls_certificate_verify_peers2} != xyes; then
+       AC_MSG_ERROR([GnuTLS version predates gnutls_certificate_verify_peers2, newer version required])
+   fi
+                  
+   # Check for iconv support if using the new RDN access functions:
+   if test ${ac_cv_func_gnutls_x509_dn_get_rdn_ava}X${ac_cv_header_iconv_h} = yesXyes; then
+      AC_CHECK_FUNCS(iconv)
+   fi
    ;;
 *) # Default to off; only create crypto-enabled binaries if requested.
    NE_DISABLE_SUPPORT(SSL, [SSL support is not enabled])
+   NE_DISABLE_SUPPORT(TS_SSL, [Thread-safe SSL support is not enabled])
    NEON_EXTRAOBJS="$NEON_EXTRAOBJS ne_stubssl"
    ;;
 esac
 AC_SUBST(NEON_SUPPORTS_SSL)
-])
+
+AC_ARG_WITH(ca-bundle, 
+  AS_HELP_STRING(--with-ca-bundle, specify filename of an SSL CA root bundle),,
+  with_ca_bundle=no)
+
+case ${NE_FLAG_SSL}-${with_ca_bundle} in
+*-no) ;;
+yes-*)
+   AC_DEFINE_UNQUOTED([NE_SSL_CA_BUNDLE], ["${with_ca_bundle}"],
+                      [Define to be filename of an SSL CA root bundle])
+   AC_MSG_NOTICE([Using ${with_ca_bundle} as default SSL CA bundle])
+   ;;
+esac
+
+AC_ARG_ENABLE(threadsafe-ssl,
+AS_HELP_STRING(--enable-threadsafe-ssl=posix, 
+[enable SSL library thread-safety using POSIX threads: suitable
+CC/CFLAGS/LIBS must be used to make the POSIX library interfaces
+available]),,
+enable_threadsafe_ssl=no)
+
+case $enable_threadsafe_ssl in
+posix|yes)
+  ne_pthr_ok=yes
+  AC_CHECK_FUNCS([pthread_mutex_init pthread_mutex_lock],,[ne_pthr_ok=no])
+  if test "${ne_pthr_ok}" = "no"; then
+     AC_MSG_ERROR([could not find POSIX mutex interfaces; (try CC="${CC} -pthread"?)])    
+  fi
+  NE_ENABLE_SUPPORT(TS_SSL, [Thread-safe SSL supported using POSIX threads])
+  ;;
+*)
+  NE_DISABLE_SUPPORT(TS_SSL, [Thread-safe SSL not supported])
+  ;;
+esac
+
+case ${with_pakchois}X${ac_cv_func_gnutls_sign_callback_set}Y${ne_cv_lib_ssl097} in
+noX*Y*) ;;
+*X*Yyes|*XyesY*)
+    # PKCS#11... ho!
+    NE_PKG_CONFIG(NE_PK11, pakchois,
+      [AC_MSG_NOTICE([[using pakchois for PKCS#11 support]])
+       AC_DEFINE(HAVE_PAKCHOIS, 1, [Define if pakchois library supported])
+       CPPFLAGS="$CPPFLAGS ${NE_PK11_CFLAGS}"
+       NEON_LIBS="${NEON_LIBS} ${NE_PK11_LIBS}"],
+      [AC_MSG_NOTICE([[pakchois library not found; no PKCS#11 support]])])
+   ;;
+esac
+]) dnl -- end defun NEON_SSL
 
 dnl Check for Kerberos installation
 AC_DEFUN([NEON_GSSAPI], [
@@ -954,6 +1086,20 @@ if test "x$KRB5_CONFIG" != "xnone"; then
    CPPFLAGS=$ne_save_CPPFLAGS
    NEON_LIBS=$ne_save_LIBS
 fi])
+
+AC_DEFUN([NEON_LIBPROXY], [
+AC_ARG_WITH(libproxy, AS_HELP_STRING(--without-libproxy, disable libproxy support))
+if test "x$with_libproxy" != "xno"; then
+   NE_PKG_CONFIG(NE_PXY, libproxy-1.0,
+     [AC_DEFINE(HAVE_LIBPROXY, 1, [Define if libproxy is supported])
+      CPPFLAGS="$CPPFLAGS $NE_PXY_CFLAGS"
+      NEON_LIBS="$NEON_LIBS ${NE_PXY_LIBS}"
+      NE_ENABLE_SUPPORT(LIBPXY, [libproxy support enabled])],
+     [NE_DISABLE_SUPPORT(LIBPXY, [libproxy support not enabled])])
+else
+   NE_DISABLE_SUPPORT(LIBPXY, [libproxy support not enabled])
+fi
+])   
 
 dnl Adds an --enable-warnings argument to configure to allow enabling
 dnl compiler warnings
@@ -1003,23 +1149,7 @@ esac])
 
 dnl Macro to optionally enable socks support
 AC_DEFUN([NEON_SOCKS], [
-
-AC_ARG_WITH([socks], AS_HELP_STRING([--with-socks],[use SOCKSv5 library]))
-
-if test "$with_socks" = "yes"; then
-  ne_save_LIBS=$LIBS
-
-  AC_CHECK_HEADERS(socks.h,
-    [AC_CHECK_LIB(socks5, connect, [:],
-      [AC_MSG_ERROR([could not find libsocks5 for SOCKS support])])],
-    [AC_MSG_ERROR([could not find socks.h for SOCKS support])])
-
-  NE_ENABLE_SUPPORT(SOCKS, [SOCKSv5 support is enabled])
-  NEON_LIBS="$NEON_LIBS -lsocks5"
-  LIBS=$ne_save_LIBS
-else
-  NE_DISABLE_SUPPORT(SOCKS, [SOCKSv5 support is not enabled])
-fi])
+])
 
 AC_DEFUN([NEON_WITH_LIBS], [
 AC_ARG_WITH([libs],
@@ -1031,9 +1161,37 @@ yes|no) AC_MSG_ERROR([--with-libs must be passed a directory argument]) ;;
      ne_add_CPPFLAGS="$ne_add_CPPFLAGS -I${dir}/include"
      ne_add_LDFLAGS="$ne_add_LDFLAGS -L${dir}/lib"
      ne_add_PATH="${ne_add_PATH}${dir}/bin:"
+     PKG_CONFIG_PATH=${PKG_CONFIG_PATH}${PKG_CONFIG_PATH+:}${dir}/lib/pkgconfig
    done
    IFS=$ne_save_IFS
    CPPFLAGS="${ne_add_CPPFLAGS} $CPPFLAGS"
    LDFLAGS="${ne_add_LDFLAGS} $LDFLAGS"
-   PATH=${ne_add_PATH}$PATH ;;
+   PATH=${ne_add_PATH}$PATH 
+   export PKG_CONFIG_PATH ;;
 esac])])
+
+AC_DEFUN([NEON_I18N], [
+
+dnl Check for NLS iff libintl.h was detected.
+AC_ARG_ENABLE(nls, 
+  AS_HELP_STRING(--disable-nls, [disable internationalization support]),,
+  [enable_nls=${ac_cv_header_libintl_h}])
+
+if test x${enable_nls} = xyes; then
+  # presume that dgettext() is available if bindtextdomain() is...
+  # checking for dgettext() itself is awkward because gcc has a 
+  # builtin of that function, which confuses AC_CHECK_FUNCS et al.
+  NE_SEARCH_LIBS(bindtextdomain, intl,,[enable_nls=no])
+  NE_CHECK_FUNCS(bind_textdomain_codeset)
+fi
+
+if test "$enable_nls" = "no"; then
+  NE_DISABLE_SUPPORT(I18N, [Internationalization support not enabled])
+else
+  NE_ENABLE_SUPPORT(I18N, [Internationalization support enabled])
+  eval localedir="${datadir}/locale"
+  AC_DEFINE_UNQUOTED([LOCALEDIR], "$localedir", 
+                     [Define to be location of localedir])
+fi
+
+])

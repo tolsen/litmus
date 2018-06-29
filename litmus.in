@@ -1,10 +1,11 @@
 #!/bin/sh
-# Copyright (c) 2001-2005 Joe Orton <litmus@webdav.org>
+# Copyright (c) 2001-2005, 2008 Joe Orton <litmus@lists.manyfish.co.uk>
 
 prefix=@prefix@
 exec_prefix=@prefix@
 libexecdir=@libexecdir@
 datadir=@datadir@
+datarootdir=@datarootdir@
 
 HTDOCS=${HTDOCS-"@datadir@/litmus/htdocs"}
 TESTROOT=${TESTROOT-"@libexecdir@/litmus"}
@@ -15,8 +16,9 @@ usage() {
 litmus: Usage: $0 [OPTIONS] URL [USERNAME PASSWORD]
 
 Options:
- -k, --keep-going  carry on testing even if one suite fails
- -p, --proxy=URL   use given proxy server URL
+ -k, --keep-going        continue testing even if one suite fails
+ -p, --proxy=URL         use given proxy server URL
+ -c, --client-cert=CERT  use given PKCS#12 client cert
 
 Significant environment variables:
 

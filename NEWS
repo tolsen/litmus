@@ -1,3 +1,31 @@
+Changes in version 0.13:
+* Changed tests:
+ - locks: owner_modify checks that PROPPATCH works against a locked
+   resource (thanks to Javier Godoy)
+* Support PKCS#12 client cert with --client-cert/-c (Alejandro Alvarez Ayllon)
+* Update to neon 0.29.6.
+
+Changes in version 0.12.1:
+* Changed tests:
+ - locks: remove DELETE from unmapped URI LOCK/DELETE/UNLOCK sequence
+ - locks: fail if LOCK gives a lockscope which does not match that requested
+ - props: use real URIs for the property namespaces
+
+Changes in version 0.12:
+* New tests:
+ - props: unmapped_lock (Henrik Holst)
+ - basic: put_no_parent
+* Changed tests:
+ - props: propvalnspace - use a valid URI in the 'foo' element
+* Update to neon 0.28.3; support neon 0.25.x->0.28.x
+
+Changes in version 0.11:
+* New tests from Julian Reschke:
+ - props: test for correct PROPPATCH propertyupdate evaluation order
+ - copymove: test for "Depth: 0" COPY of collection 
+* Test URL is no longer path-escaped internally.
+* Update to neon 0.26.3.
+
 Changes in version 0.10.5:
 * Add another test for handling of unknown state tokens in an If: header.
 * Update to neon 0.25.4.

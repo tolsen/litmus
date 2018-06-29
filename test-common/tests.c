@@ -1,6 +1,6 @@
 /* 
    Stupidly simple test framework
-   Copyright (C) 2001-2002, 2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2009, Joe Orton <joe@manyfish.co.uk>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -22,8 +22,6 @@
 
 #include <sys/types.h>
 
-#include <sys/signal.h>
-
 #include <stdio.h>
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
@@ -40,10 +38,14 @@
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
+#ifdef HAVE_LOCALE_H
+#include <locale.h>
+#endif
 
 #include "ne_string.h"
 #include "ne_utils.h"
 #include "ne_socket.h"
+#include "ne_i18n.h"
 
 #include "tests.h"
 #include "child.h"
@@ -59,6 +61,8 @@ int test_argc;
 const char *test_suite;
 int test_num;
 
+static int quiet, count;
+
 /* statistics for all tests so far */
 static int passes = 0, fails = 0, skipped = 0, warnings = 0;
 
@@ -67,6 +71,8 @@ static int warned, aborted = 0;
 static const char *test_name; /* current test name */
 
 static int use_colour = 0;
+
+static int flag_child;
 
 /* resource for ANSI escape codes:
  * http://www.isthe.com/chongo/tech/comp/ansi_escapes.html */
@@ -80,6 +86,9 @@ void t_context(const char *context, ...)
     va_start(ap, context);
     ne_vsnprintf(test_context, BUFSIZ, context, ap);
     va_end(ap);
+    if (flag_child) {
+        NE_DEBUG(NE_DBG_HTTP, "context: %s\n", test_context);
+    }
     have_context = 1;
 }
 
@@ -98,7 +107,8 @@ void t_warning(const char *str, ...)
 
 #define TEST_DEBUG \
 (NE_DBG_HTTP | NE_DBG_SOCKET | NE_DBG_HTTPBODY | NE_DBG_HTTPAUTH | \
- NE_DBG_LOCKS | NE_DBG_XMLPARSE | NE_DBG_XML | NE_DBG_SSL)
+ NE_DBG_LOCKS | NE_DBG_XMLPARSE | NE_DBG_XML | NE_DBG_SSL | \
+ NE_DBG_HTTPPLAIN)
 
 #define W(m) do { if (write(0, m, strlen(m)) < 0) exit(99); } while(0)
 
@@ -136,12 +146,35 @@ void in_child(void)
     NE_DEBUG(TEST_DEBUG, "**** Child forked for test %s ****\n", test_name);
     signal(SIGSEGV, child_segv);
     signal(SIGABRT, child_segv);
+    flag_child = 1;
 }
+
+static const char dots[] = "......................";
+
+static void print_prefix(int n)
+{
+    if (quiet) {
+        printf("\r%s%.*s %2u/%2u ", test_suite, 
+               (int) (strlen(dots) - strlen(test_suite)), dots,
+               n + 1, count);
+    }
+    else {
+        if (warned) {
+	    printf("    %s ", dots);
+        }
+        else {
+            printf("\r%2d. %s%.*s ", n, test_name, 
+               (int) (strlen(dots) - strlen(test_name)), dots);
+        }
+    }
+    fflush(stdout);
+}
+
 
 int main(int argc, char *argv[])
 {
     int n;
-    static const char dots[] = "......................";
+    char *tmp;
     
     /* get basename(argv[0]) */
     test_suite = strrchr(argv[0], '/');
@@ -150,6 +183,12 @@ int main(int argc, char *argv[])
     } else {
 	test_suite++;
     }
+
+#ifdef HAVE_SETLOCALE
+    setlocale(LC_MESSAGES, "");
+#endif
+
+    ne_i18n_init(NULL);
 
 #if defined(HAVE_ISATTY) && defined(STDOUT_FILENO)
     if (isatty(STDOUT_FILENO)) {
@@ -200,8 +239,16 @@ int main(int argc, char *argv[])
 	printf(" Socket library initalization failed.\n");
     }
 
-    printf("-> running `%s':\n", test_suite);
+    if ((tmp = getenv("TEST_QUIET")) != NULL && strcmp(tmp, "1") == 0) {
+        quiet = 1;
+    }
+
+    if (!quiet)
+        printf("-> running `%s':\n", test_suite);
     
+    for (count = 0; tests[count].fn; count++)
+        /* nullop */;
+
     for (n = 0; !aborted && tests[n].fn != NULL; n++) {
 	int result, is_xfail = 0;
 #ifdef NEON_MEMLEAK
@@ -210,8 +257,9 @@ int main(int argc, char *argv[])
 #endif
 
 	test_name = tests[n].name;
-	printf("%2d. %s%.*s ", n, test_name, 
-	       (int) (strlen(dots) - strlen(test_name)), dots);
+
+        print_prefix(n);
+
 	have_context = 0;
 	test_num = n;
 	warned = 0;
@@ -252,38 +300,50 @@ int main(int argc, char *argv[])
             }
         }
 
-	/* align the result column if we've had warnings. */
-	if (warned) {
-	    printf("    %s ", dots);
-	}
+        print_prefix(n);
 
 	switch (result) {
 	case OK:
+	    passes++;
             if (is_xfail) {
                 COL("32;07"); 
-                printf("xfail");
-            } else {
+                printf("XFAIL");
+            } else if (!quiet) {
                 COL("32"); 
                 printf("pass"); 
             }
             NOCOL;
-	    if (warned) {
+            if (quiet && is_xfail) {
+                printf(" - %s", test_name);
+                if (have_context) {
+                    printf(" (%s)", test_context);
+                }
+            }
+	    if (warned && !quiet) {
 		printf(" (with %d warning%s)", warned, (warned > 1)?"s":"");
 	    }
 #ifdef NEON_MEMLEAK
             if (is_xleaky) {
-                printf(" (with expected leak, %" NE_FMT_SIZE_T " bytes)",
-                       ne_alloc_used - allocated);
+                if (quiet) {
+                    printf("expected leak - %s: %" NE_FMT_SIZE_T " bytes",
+                           test_name, ne_alloc_used - allocated);
+                }
+                else {
+                    printf(" (expected leak, %" NE_FMT_SIZE_T " bytes)",
+                           ne_alloc_used - allocated);
+                }
             }
 #endif
-	    putchar('\n');
-	    passes++;
+	    if (!quiet || is_xfail) putchar('\n');
 	    break;
 	case FAILHARD:
 	    aborted = 1;
 	    /* fall-through */
 	case FAIL:
 	    COL("41;37;01"); printf("FAIL"); NOCOL;
+            if (quiet) {
+                printf(" - %s", test_name);
+            }
 	    if (have_context) {
 		printf(" (%s)", test_context);
 	    }
@@ -295,6 +355,9 @@ int main(int argc, char *argv[])
 	    /* fall-through */
 	case SKIP:
 	    COL("44;37;01"); printf("SKIPPED"); NOCOL;
+            if (quiet) {
+                printf(" - %s", test_name);
+            }
 	    if (have_context) {
 		printf(" (%s)", test_context);
 	    }
@@ -308,30 +371,59 @@ int main(int argc, char *argv[])
 	}
 
 	reap_server();
+            
+        if (quiet) {
+            print_prefix(n);
+        }
     }
 
     /* discount skipped tests */
     if (skipped) {
-	printf("-> %d %s.\n", skipped,
-	       skipped==1?"test was skipped":"tests were skipped");
+        if (!quiet) 
+            printf("-> %d %s.\n", skipped,
+                   skipped == 1 ? "test was skipped" : "tests were skipped");
 	n -= skipped;
-	if (passes + fails != n) {
-	    printf("-> ARGH! Number of test results does not match "
-		   "number of tests.\n"
-		   "-> ARGH! Test Results are INRELIABLE.\n");
-	}
     }
     /* print the summary. */
     if (skipped && n == 0) {
-	printf("<- all tests skipped for `%s'.\n", test_suite);
+        if (quiet)
+            puts("(all skipped)");
+        else
+            printf("<- all tests skipped for `%s'.\n", test_suite);
     } else {
-	printf("<- summary for `%s': "
-	       "of %d tests run: %d passed, %d failed. %.1f%%\n",
-	       test_suite, n, passes, fails, 100*(float)passes/n);
+        if (quiet) {
+            printf("\r%s%.*s %2u/%2u ", test_suite, 
+                   (int) (strlen(dots) - strlen(test_suite)), dots,
+                   passes, count);
+            if (fails == 0) {
+                COL("32"); 
+                printf("passed");
+                NOCOL;
+                putchar(' ');
+            }
+            else {
+                printf("passed, %d failed ", fails);
+            }                       
+            if (skipped)
+                printf("(%d skipped) ", skipped);
+        }
+        else /* !quiet */
+            printf("<- summary for `%s': "
+                   "of %d tests run: %d passed, %d failed. %.1f%%\n",
+                   test_suite, n, passes, fails, 100*(float)passes/n);
 	if (warnings) {
-	    printf("-> %d warning%s issued.\n", warnings, 
-		   warnings==1?" was":"s were");
-	}
+	    if (quiet) {
+                printf("(%d warning%s)\n", warnings, 
+                       warnings==1?"s":"");
+            }
+            else {
+                printf("-> %d warning%s issued.\n", warnings, 
+                       warnings==1?" was":"s were");
+            }
+        }
+        else if (quiet) {
+            putchar('\n');
+        }
     }
 
     if (fclose(debug)) {

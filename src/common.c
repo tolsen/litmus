@@ -1,6 +1,6 @@
 /* 
    litmus: WebDAV server test suite: common routines
-   Copyright (C) 2001-2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2001-2004, 2011, Joe Orton <joe@manyfish.co.uk>
                                                                      
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -36,6 +36,8 @@
 
 #include <ne_uri.h>
 #include <ne_auth.h>
+#include <ne_ssl.h>
+#include <ne_session.h>
 
 #include "getopt.h"
 
@@ -62,10 +64,13 @@ static unsigned int proxy_port;
 int i_foo_fd;
 off_t i_foo_len;
 
+static char *client_certificate = NULL;
+
 const static struct option longopts[] = {
     { "htdocs", required_argument, NULL, 'd' },
     { "help", no_argument, NULL, 'h' },
     { "proxy", required_argument, NULL, 'p' },
+    { "client-cert",  required_argument, NULL, 'c' },
 #if 0
     { "colour", no_argument, NULL, 'c' },
     { "no-colour", no_argument, NULL, 'n' },
@@ -78,7 +83,9 @@ static void usage(FILE *output)
     fprintf(output, 
 	    "\rUsage: %s [OPTIONS] URL [username password]\n"
 	    " Options are:\n"
-	    "    -d DIR    use given htdocs root directory\n",
+	    "    -d DIR    use given htdocs root directory\n"
+	    "    -d PROXY  use PROXY as proxy URL\n"
+            "    -c CERT   use a PKCS#12 client certificate\n",
 	    test_argv[0]);
 }
 
@@ -144,7 +151,7 @@ int init(void)
     char *proxy_url = NULL;
 
     while ((optc = getopt_long(test_argc, test_argv, 
-			       "d:hp", longopts, NULL)) != -1) {
+			       "d:hpc:", longopts, NULL)) != -1) {
 	switch (optc) {
 	case 'd':
 	    htdocs_root = optarg;
@@ -155,6 +162,9 @@ int init(void)
 	case 'h':
 	    usage(stdout);
 	    exit(1);
+        case 'c':
+            client_certificate = optarg;
+            break;
 	default:
 	    usage(stderr);
 	    exit(1);
@@ -213,8 +223,6 @@ int init(void)
 	i_path = ne_concat(u.path, "/", NULL);
     }
 
-    i_path = ne_path_escape(i_path);
-    
     if (n > 2) {
 	i_username = test_argv[optind+1];
 	i_password = test_argv[optind+2];
@@ -283,9 +291,30 @@ static int init_session(ne_session *sess)
 	if (!ne_has_support(NE_FEATURE_SSL)) {
 	    t_context("No SSL support, reconfigure using --with-ssl");
 	    return FAILHARD;
-	} else {
-	    ne_ssl_set_verify(sess, ignore_verify, NULL);
-	}
+        }
+        else {
+            ne_ssl_set_verify(sess, ignore_verify, NULL);
+            
+            if (client_certificate) {
+                ne_ssl_client_cert *cc;
+                
+                cc = ne_ssl_clicert_read(client_certificate);
+                if (!cc) {
+                    t_context("Can not read the client certificate '%s'", 
+                              client_certificate);
+                    return FAILHARD;
+                }
+                if (ne_ssl_clicert_encrypted(cc)) {
+                    if(ne_ssl_clicert_decrypt(cc, i_password)) {
+                        t_context("Invalid password for the certificate");
+                        return FAILHARD;
+                    }
+                }
+                
+                ne_ssl_set_clicert(sess, cc);
+                ne_ssl_clicert_free(cc);
+            }
+        }
     }
     
     return OK;
@@ -341,21 +370,9 @@ int upload_foo(const char *path)
     int ret;
     /* i_foo_fd is rewound automagically by ne_request.c */
     ret = ne_put(i_session, uri, i_foo_fd);
-    if (ret)
-	t_context("PUT of '%s': %s", uri, ne_get_error(i_session));
     free(uri);
-    return ret;
-}
-
-int upload_foo2(const char *path)
-{
-    char *uri = ne_concat(i_path, path, NULL);
-    int ret;
-    /* i_foo_fd is rewound automagically by ne_request.c */
-    ret = ne_put(i_session2, uri, i_foo_fd);
     if (ret)
-	t_context("PUT of '%s': %s", uri, ne_get_error(i_session2));
-    free(uri);
+	t_context("PUT of `%s': %s", uri, ne_get_error(i_session));
     return ret;
 }
 
@@ -376,20 +393,6 @@ int options(void)
     return OK;
 }
 
-char *get_lastmodified(const char *path)
-{
-    ne_request *req = ne_request_create(i_session, "HEAD", path);
-    char *lastmodified = NULL;
-
-    if (ne_request_dispatch(req) == NE_OK && ne_get_status(req)->code == 200) {
-        const char *value = ne_get_response_header(req, "Last-Modified");
-        if (value) lastmodified = ne_strdup(value);
-    }
-
-    ne_request_destroy(req);
-    return lastmodified;
-}
-
 char *get_etag(const char *path)
 {
     ne_request *req = ne_request_create(i_session, "HEAD", path);
@@ -402,50 +405,4 @@ char *get_etag(const char *path)
 
     ne_request_destroy(req);
     return etag;
-}
-
-char *create_temp(const char *contents)
-{
-    char tmp[256] = "/tmp/litmus-XXXXXX";
-    int fd;
-    size_t len = strlen(contents);
-    
-    fd = mkstemp(tmp);
-    BINARYMODE(fd);
-    if (write(fd, contents, len) != (ssize_t)len) {
-        close(fd);
-        return NULL;
-    }        
-    close(fd);
-
-    return ne_strdup(tmp);
-}
-
-int compare_contents(const char *fn, const char *contents)
-{
-    int fd = open(fn, O_RDONLY | O_BINARY), ret;
-    char buffer[BUFSIZ];
-    ne_buffer *b = ne_buffer_create();
-    ssize_t bytes;
-
-    while ((bytes = read(fd, buffer, BUFSIZ)) > 0) {
-	ne_buffer_append(b, buffer, bytes);
-    }
-
-    close(fd);
-
-#define SvsS "%" NE_FMT_SIZE_T " vs %" NE_FMT_SIZE_T
-    if (strlen(b->data) != strlen(contents)) {
-	t_warning("length mismatch: " SvsS, strlen(b->data), strlen(contents));
-    }
-    if (strlen(b->data) != ne_buffer_size(b)) {
-	t_warning("buffer problem: " SvsS, 
-		  strlen(b->data), ne_buffer_size(b));
-    }
-#undef SvsS
-
-    ret = memcmp(b->data, contents, ne_buffer_size(b));
-    ne_buffer_destroy(b);
-
-    return ret;
 }

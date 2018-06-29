@@ -53,12 +53,14 @@ static int expect100(void)
 
     ONN("could not connect to server", !success);
     
-    sprintf(req, 
-	    "PUT %sexpect100 HTTP/1.1" EOL
-	    "Host: %s" EOL
-	    "Content-Length: 100" EOL
-	    "Expect: 100-continue" EOL EOL,
-	    i_path, ne_get_server_hostport(i_session));
+    ne_snprintf(req, sizeof req,
+                "PUT %sexpect100 HTTP/1.1" EOL
+                "Host: %s" EOL
+                "X-Litmus: http" EOL
+                "User-Agent: litmus/" PACKAGE_VERSION EOL
+                "Content-Length: 100" EOL
+                "Expect: 100-continue" EOL EOL,
+                i_path, ne_get_server_hostport(i_session));
 
     NE_DEBUG(NE_DBG_SOCKET, "Request:\n%s", req);
 

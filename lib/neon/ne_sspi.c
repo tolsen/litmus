@@ -1,6 +1,7 @@
 /* 
    Microsoft SSPI based authentication routines
    Copyright (C) 2004-2005, Vladimir Berezniker @ http://public.xdi.org/=vmpn
+   Copyright (C) 2007, Yves Martin  <ymartin59@free.fr>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -23,17 +24,23 @@
 
 #include "ne_utils.h"
 #include "ne_string.h"
+#include "ne_socket.h"
 #include "ne_sspi.h"
 
 #ifdef HAVE_SSPI
 
 #define SEC_SUCCESS(Status) ((Status) >= 0)
 
+#ifndef SECURITY_ENTRYPOINT   /* Missing in MingW 3.7 */
+#define SECURITY_ENTRYPOINT "InitSecurityInterfaceA"
+#endif
+
 struct SSPIContextStruct {
     CtxtHandle context;
     char *serverName;
     CredHandle credentials;
     int continueNeeded;
+    int authfinished;
     char *mechanism;
     int ntlm;
     ULONG maxTokenSize;
@@ -277,7 +284,7 @@ static int base64ToBuffer(const char *token, SecBufferDesc * secBufferDesc)
 
     buffer->BufferType = SECBUFFER_TOKEN;
     buffer->cbBuffer =
-        ne_unbase64(token, &((unsigned char *) buffer->pvBuffer));
+        ne_unbase64(token, (unsigned char **) &buffer->pvBuffer);
 
     if (buffer->cbBuffer == 0) {
         NE_DEBUG(NE_DBG_HTTPAUTH,
@@ -325,24 +332,40 @@ static int freeBuffer(SecBufferDesc * secBufferDesc)
 }
 
 /*
- * Returns mechanism string for the specified context.
+ * Canonicalize a server host name if possible.
+ * The returned pointer must be freed after usage.
  */
-int ne_sspi_get_mechanism(void *context, char const **mechanism)
+static char *canonical_hostname(const char *serverName)
 {
-    int status;
-    SSPIContext *sspiContext;
+    char *hostname;
+    ne_sock_addr *addresses;
+    
+    /* DNS resolution.  It would be useful to be able to use the
+     * AI_CANONNAME flag where getaddrinfo() is available, but the
+     * reverse-lookup is sufficient and simpler. */
+    addresses = ne_addr_resolve(serverName, 0);
+    if (ne_addr_result(addresses)) {
+        /* Lookup failed */
+        char buf[256];
+        NE_DEBUG(NE_DBG_HTTPAUTH,
+                 "sspi: Could not resolve IP address for `%s': %s\n",
+                 serverName, ne_addr_error(addresses, buf, sizeof buf));
+        hostname = ne_strdup(serverName);
+    } else {
+        char hostbuffer[256];
+        const ne_inet_addr *address = ne_addr_first(addresses);
 
-    if (initialized <= 0) {
-        return -1;
+        if (ne_iaddr_reverse(address, hostbuffer, sizeof hostbuffer) == 0) {
+            hostname = ne_strdup(hostbuffer);
+        } else {
+            NE_DEBUG(NE_DBG_HTTPAUTH, "sspi: Could not resolve host name"
+                     "from IP address for `%s'\n", serverName);
+            hostname = ne_strdup(serverName);
+        }
     }
 
-    status = getContext(context, &sspiContext);
-    if (status) {
-        return status;
-    }
-
-    *mechanism = sspiContext->mechanism;
-    return 0;
+    ne_addr_destroy(addresses);
+    return hostname;
 }
 
 /*
@@ -352,6 +375,7 @@ int ne_sspi_get_mechanism(void *context, char const **mechanism)
 int ne_sspi_create_context(void **context, char *serverName, int ntlm)
 {
     SSPIContext *sspiContext;
+    char *canonicalName;
 
     if (initialized <= 0) {
         return -1;
@@ -366,11 +390,17 @@ int ne_sspi_create_context(void **context, char *serverName, int ntlm)
         sspiContext->maxTokenSize = ntlmMaxTokenSize;
     } else {
         sspiContext->mechanism = "Negotiate";
-        sspiContext->serverName = ne_concat("HTTP/", serverName, NULL);
+        /* Canonicalize to conform to GSSAPI behavior */
+        canonicalName = canonical_hostname(serverName);
+        sspiContext->serverName = ne_concat("HTTP/", canonicalName, NULL);
+        ne_free(canonicalName);
+        NE_DEBUG(NE_DBG_HTTPAUTH, "sspi: Created context with SPN '%s'\n",
+                 sspiContext->serverName);
         sspiContext->maxTokenSize = negotiateMaxTokenSize;
     }
 
     sspiContext->ntlm = ntlm;
+    sspiContext->authfinished = 0;
     *context = sspiContext;
     return 0;
 }
@@ -381,7 +411,11 @@ int ne_sspi_create_context(void **context, char *serverName, int ntlm)
 static void resetContext(SSPIContext * sspiContext)
 {
     pSFT->DeleteSecurityContext(&(sspiContext->context));
+#if defined(_MSC_VER) && _MSC_VER <= 1200
+    pSFT->FreeCredentialHandle(&(sspiContext->credentials));
+#else
     pSFT->FreeCredentialsHandle(&(sspiContext->credentials));
+#endif
     sspiContext->continueNeeded = 0;
 }
 
@@ -429,7 +463,22 @@ int ne_sspi_destroy_context(void *context)
     ne_free(sspiContext);
     return 0;
 }
+int ne_sspi_clear_context(void *context)
+{
+    int status;
+    SSPIContext *sspiContext;
 
+    if (initialized <= 0) {
+        return -1;
+    }
+
+    status = getContext(context, &sspiContext);
+    if (status) {
+        return status;
+    }
+    sspiContext->authfinished = 0;
+    return 0;
+}
 /*
  * Processes received authentication tokens as well as supplies the
  * response token.
@@ -468,6 +517,7 @@ int ne_sspi_authenticate(void *context, const char *base64Token, char **response
         SecBuffer inBuffer;
 
         if (!sspiContext->continueNeeded) {
+            freeBuffer(&outBufferDesc);
             NE_DEBUG(NE_DBG_HTTPAUTH, "sspi: Got an unexpected token.\n");
             return -1;
         }
@@ -476,6 +526,7 @@ int ne_sspi_authenticate(void *context, const char *base64Token, char **response
 
         status = base64ToBuffer(base64Token, &inBufferDesc);
         if (status) {
+            freeBuffer(&outBufferDesc);
             return status;
         }
 
@@ -485,11 +536,26 @@ int ne_sspi_authenticate(void *context, const char *base64Token, char **response
                                       sspiContext->serverName, contextFlags,
                                       &inBufferDesc, &(sspiContext->context),
                                       &outBufferDesc);
+        if (securityStatus == SEC_E_OK)
+        {
+            sspiContext->authfinished = 1;
+        }
         freeBuffer(&inBufferDesc);
     } else {
         if (sspiContext->continueNeeded) {
+            freeBuffer(&outBufferDesc);
             NE_DEBUG(NE_DBG_HTTPAUTH, "sspi: Expected a token from server.\n");
             return -1;
+        }
+        if (sspiContext->authfinished && (sspiContext->credentials.dwLower || sspiContext->credentials.dwUpper)) {
+            if (sspiContext->authfinished)
+            {
+                freeBuffer(&outBufferDesc);
+                sspiContext->authfinished = 0;
+                NE_DEBUG(NE_DBG_HTTPAUTH,"sspi: failing because starting over from failed try.\n");
+                return -1;
+            }
+            sspiContext->authfinished = 0;
         }
 
         /* Reset any existing context since we are starting over */
@@ -497,9 +563,10 @@ int ne_sspi_authenticate(void *context, const char *base64Token, char **response
 
         if (acquireCredentialsHandle
             (&sspiContext->credentials, sspiContext->mechanism) != SEC_E_OK) {
-            NE_DEBUG(NE_DBG_HTTPAUTH,
-                     "sspi: acquireCredentialsHandle failed.\n");
-            return -1;
+                freeBuffer(&outBufferDesc);
+                NE_DEBUG(NE_DBG_HTTPAUTH,
+                    "sspi: acquireCredentialsHandle failed.\n");
+                return -1;
         }
 
         securityStatus =
