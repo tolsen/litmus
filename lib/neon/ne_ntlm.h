@@ -1,6 +1,6 @@
 /* 
-   Internationalization of neon
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Handling of NTLM Authentication
+   Copyright (C) 2009, Kai Sommerfeld <kso@openoffice.org>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -18,30 +18,29 @@
    MA 02111-1307, USA
 
 */
+#ifndef NE_NTLM_H
+#define NE_NTLM_H
 
 #include "config.h"
 
-#include "ne_i18n.h"
+/* PRIVATE TO NEON -- NOT PART OF THE EXTERNAL API. */
 
-#ifdef HAVE_LIBINTL_H
-#include <libintl.h>
-#endif
+#ifdef HAVE_NTLM
 
-void ne_i18n_init(const char *encoding)
-{
-#if defined(NE_HAVE_I18N) && defined(NEON_IS_LIBRARY)
-    /* The bindtextdomain call is only enabled if neon is built as a
-     * library rather than as a bundled source; it would be possible
-     * in the future to allow it for bundled builds too, if the neon
-     * message catalogs could be installed alongside the app's own
-     * message catalogs. */
-    bindtextdomain("neon", LOCALEDIR);
+#include "ne_defs.h"
 
-#ifdef HAVE_BIND_TEXTDOMAIN_CODESET
-    if (encoding) {
-        bind_textdomain_codeset("neon", encoding);
-    }
-#endif /* HAVE_BIND_TEXTDOMAIN_CODESET */
+typedef struct ne_ntlm_context_s ne_ntlm_context;
 
-#endif
-}
+NE_PRIVATE ne_ntlm_context *ne__ntlm_create_context(const char *userName, const char *password);
+
+NE_PRIVATE int ne__ntlm_clear_context(ne_ntlm_context *context);
+
+NE_PRIVATE void ne__ntlm_destroy_context(ne_ntlm_context *context);
+
+NE_PRIVATE int ne__ntlm_authenticate(ne_ntlm_context *context, const char *responseToken);
+
+NE_PRIVATE char *ne__ntlm_getRequestToken(ne_ntlm_context *context);
+
+#endif /* HAVE_NTLM */
+
+#endif /* NE_NTLM_H */

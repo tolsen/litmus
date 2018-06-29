@@ -1,6 +1,6 @@
 /* 
    HTTP-redirect support
-   Copyright (C) 1999-2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2007, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -33,7 +33,7 @@
 #include "ne_alloc.h"
 #include "ne_uri.h"
 #include "ne_redirect.h"
-#include "ne_i18n.h"
+#include "ne_internal.h"
 #include "ne_string.h"
 
 #define REDIRECT_ID "http://www.webdav.org/neon/hooks/http-redirect"
@@ -49,7 +49,7 @@ static void
 create(ne_request *req, void *session, const char *method, const char *uri)
 {
     struct redirect *red = session;
-    NE_FREE(red->requri);
+    if (red->requri) ne_free(red->requri);
     red->requri = ne_strdup(uri);
 }
 
@@ -89,7 +89,7 @@ static int post_send(ne_request *req, void *private, const ne_status *status)
     /* Parse the Location header */
     if (ne_uri_parse(location, &red->uri) || red->uri.path == NULL) {
         red->valid = 0;
-	ne_set_error(red->sess, _("Could not parse redirect location."));
+	ne_set_error(red->sess, _("Could not parse redirect destination URL"));
         ret = NE_ERROR;
     } else {
         /* got a valid redirect. */

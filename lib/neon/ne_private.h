@@ -1,6 +1,6 @@
 /* 
    HTTP Request Handling
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2009, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -30,12 +30,23 @@
 #include "ne_ssl.h"
 
 struct host_info {
-    char *hostname;
+    /* Type of host represented: */
+    enum proxy_type {
+        PROXY_NONE = 0,
+        PROXY_HTTP, /* an HTTP proxy */
+        PROXY_SOCKS /* a SOCKS proxy */
+    } proxy;
     unsigned int port;
-    ne_sock_addr *address; /* if non-NULL, result of resolving 'hostname'. */
-    /* current network address obtained from 'address' being used. */
+    /* If hostname is non-NULL, host is identified by this hostname. */
+    char *hostname, *hostport;
+    /* If address is non-NULL, the result of resolving ->hostname. */
+    ne_sock_addr *address;
+    /* If current non-NULL, current network address used in ->address. */
     const ne_inet_addr *current;
-    char *hostport; /* URI hostport segment */
+    /* If override is non-NULL, the host is identified by this network
+     * address. */
+    const ne_inet_addr *network;
+    struct host_info *next;
 };
 
 /* Store every registered callback in a generic container, and cast
@@ -65,17 +76,29 @@ struct ne_session_s {
 		    * HTTP/1.1 compliant. */
 
     char *scheme;
-    struct host_info server, proxy;
 
-    /* application-provided address list */
-    const ne_inet_addr **addrlist;
-    size_t numaddrs, curaddr;
+    /* Server host details. */
+    struct host_info server;
+    /* Proxy host details, or NULL if not using a proxy. */
+    struct host_info *proxies;
+    /* Most recently used proxy server. */
+    struct host_info *prev_proxy;
+
+    /* Pointer to the active .server or .proxies as appropriate: */
+    struct host_info *nexthop;
+
+    /* Local address to which sockets should be bound. */
+    const ne_inet_addr *local_addr;
 
     /* Settings */
-    unsigned int use_proxy:1; /* do we have a proxy server? */
-    unsigned int no_persist:1; /* set to disable persistent connections */
-    unsigned int use_ssl:1; /* whether a secure connection is required */
-    unsigned int in_connect:1; /* doing a proxy CONNECT */
+    int use_ssl; /* whether a secure connection is required */
+    int in_connect; /* doing a proxy CONNECT */
+    int any_proxy_http; /* whether any configured proxy is an HTTP proxy */
+    
+    enum ne_sock_sversion socks_ver;
+    char *socks_user, *socks_password;
+
+    int flags[NE_SESSFLAG_LAST];
 
     ne_progress progress_cb;
     void *progress_ud;
@@ -83,10 +106,11 @@ struct ne_session_s {
     ne_notify_status notify_cb;
     void *notify_ud;
 
-    int rdtimeout; /* read timeout. */
+    int rdtimeout, cotimeout; /* read, connect timeouts. */
 
-    struct hook *create_req_hooks, *pre_send_hooks, *post_send_hooks;
-    struct hook *destroy_req_hooks, *destroy_sess_hooks, *private;
+    struct hook *create_req_hooks, *pre_send_hooks, *post_send_hooks,
+        *post_headers_hooks, *destroy_req_hooks, *destroy_sess_hooks, 
+        *close_conn_hooks, *private;
 
     char *user_agent; /* full User-Agent: header field */
 
@@ -94,6 +118,9 @@ struct ne_session_s {
     ne_ssl_client_cert *client_cert;
     ne_ssl_certificate *server_cert;
     ne_ssl_context *ssl_context;
+    int ssl_cc_requested; /* set to non-zero if a client cert was
+                           * requested during initial handshake, but
+                           * none could be provided. */
 #endif
 
     /* Server cert verification callback: */
@@ -102,6 +129,8 @@ struct ne_session_s {
     /* Client cert provider callback: */
     ne_ssl_provide_fn ssl_provide_fn;
     void *ssl_provide_ud;
+
+    ne_session_status_info status;
 
     /* Error string */
     char error[512];
@@ -112,9 +141,14 @@ struct ne_session_s {
 typedef int (*ne_push_fn)(void *userdata, const char *buf, size_t count);
 
 /* Do the SSL negotiation. */
-int ne__negotiate_ssl(ne_request *req);
+NE_PRIVATE int ne__negotiate_ssl(ne_session *sess);
 
-/* Hack to fix ne_compress layer problems */
-void ne__reqhook_pre_send(ne_request *sess, ne_pre_send_fn fn, void *userdata);
+/* Set the session error appropriate for SSL verification failures. */
+NE_PRIVATE void ne__ssl_set_verify_err(ne_session *sess, int failures);
+
+/* Return non-zero if hostname from certificate (cn) matches hostname
+ * used for session (hostname); follows RFC2818 logic. */
+NE_PRIVATE int ne__ssl_match_hostname(const char *cn, size_t cnlen, 
+                                      const char *hostname);
 
 #endif /* HTTP_PRIVATE_H */

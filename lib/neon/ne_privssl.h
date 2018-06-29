@@ -1,6 +1,6 @@
 /* 
    SSL interface definitions internal to neon.
-   Copyright (C) 2003, 2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2003-2005, 2008, 2009, Joe Orton <joe@manyfish.co.uk>
    Copyright (C) 2004, Aleix Conchillo Flaque <aleix@member.fsf.org>
 
    This library is free software; you can redistribute it and/or
@@ -39,9 +39,18 @@
 struct ne_ssl_context_s {
     SSL_CTX *ctx;
     SSL_SESSION *sess;
+    const char *hostname; /* for SNI */
+    int failures; /* bitmask of exposed failure bits. */
 };
 
 typedef SSL *ne_ssl_socket;
+
+/* Create a clicert object from cert DER {der, der_len}, using given
+ * RSA_METHOD for the RSA object. */
+NE_PRIVATE ne_ssl_client_cert *
+ne__ssl_clicert_exkey_import(const unsigned char *der,
+                             size_t der_len,
+                             const RSA_METHOD *method);
 
 #endif /* HAVE_OPENSSL */
 
@@ -51,13 +60,47 @@ typedef SSL *ne_ssl_socket;
 
 struct ne_ssl_context_s {
     gnutls_certificate_credentials cred;
-    /* TODO: store session here too */
+    int verify; /* non-zero if client cert verification required */
+
+    const char *hostname; /* for SNI */
+
+    /* Session cache. */
+    union ne_ssl_scache {
+        struct {
+            gnutls_datum key, data;
+        } server;
+#if defined(HAVE_GNUTLS_SESSION_GET_DATA2)
+        gnutls_datum client;
+#else
+        struct {
+            char *data;
+            size_t len;
+        } client;
+#endif
+    } cache;
+
+#ifdef HAVE_GNUTLS_SIGN_CALLBACK_SET
+    gnutls_sign_func sign_func;
+    void *sign_data;
+#endif
 };
 
 typedef gnutls_session ne_ssl_socket;
 
+NE_PRIVATE ne_ssl_client_cert *
+ne__ssl_clicert_exkey_import(const unsigned char *der, size_t der_len);
+
 #endif /* HAVE_GNUTLS */
 
-ne_ssl_socket ne__sock_sslsock(ne_socket *sock);
+#ifdef NE_HAVE_SSL
+NE_PRIVATE ne_ssl_socket ne__sock_sslsock(ne_socket *sock);
+
+/* Process-global initialization of the SSL library; returns non-zero
+ * on error. */
+NE_PRIVATE int ne__ssl_init(void);
+
+/* Process-global de-initialization of the SSL library. */
+NE_PRIVATE void ne__ssl_exit(void);
+#endif
 
 #endif /* NE_PRIVSSL_H */

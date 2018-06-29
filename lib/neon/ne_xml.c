@@ -1,6 +1,6 @@
 /* 
    Wrapper interface to XML parser
-   Copyright (C) 1999-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2007, 2009, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -31,7 +31,7 @@
 #include <strings.h>
 #endif
 
-#include "ne_i18n.h"
+#include "ne_internal.h"
 
 #include "ne_alloc.h"
 #include "ne_xml.h"
@@ -47,9 +47,9 @@
 #endif
 typedef XML_Char ne_xml_char;
 
-#if !defined(XML_MAJOR_VERSION) || (XML_MAJOR_VERSION < 2 \
-                                    && XML_MINOR_VERSION == 95 \
-                                    && XML_MICRO_VERSION < 2)
+#if !defined(XML_MAJOR_VERSION)
+#define NEED_BOM_HANDLING
+#elif XML_MAJOR_VERSION < 2 && XML_MINOR_VERSION == 95 && XML_MICRO_VERSION < 2
 #define NEED_BOM_HANDLING
 #endif
 
@@ -170,7 +170,7 @@ static xmlSAXHandler sax_handler = {
 };
 
 /* empty attributes array to mimic expat behaviour */
-static const char *empty_atts[] = {NULL, NULL};
+static const char *const empty_atts[] = {NULL, NULL};
 
 /* macro for determining the attributes array to pass */
 #define PASS_ATTS(atts) (atts ? (const char **)(atts) : empty_atts)
@@ -405,6 +405,28 @@ static void end_element(void *userdata, const ne_xml_char *name)
     destroy_element(elm);
 }
 
+#if defined(HAVE_EXPAT) && XML_MAJOR_VERSION > 1
+/* Stop the parser if an entity declaration is hit. */
+static void entity_declaration(void *userData, const XML_Char *entityName,
+                              int is_parameter_entity, const XML_Char *value,
+                              int value_length, const XML_Char *base,
+                              const XML_Char *systemId, const XML_Char *publicId,
+                              const XML_Char *notationName)
+{
+    ne_xml_parser *parser = userData;
+    
+    NE_DEBUG(NE_DBG_XMLPARSE, "XML: entity declaration [%s]. Failing.\n",
+             entityName);
+
+    XML_StopParser(parser->parser, XML_FALSE);
+}
+#elif defined(HAVE_EXPAT)
+/* A noop default_handler. */
+static void default_handler(void *userData, const XML_Char *s, int len)
+{
+}
+#endif
+
 /* Find a namespace definition for 'prefix' in given element, where
  * length of prefix is 'pfxlen'.  Returns the URI or NULL. */
 static const char *resolve_nspace(const struct element *elm, 
@@ -426,6 +448,22 @@ static const char *resolve_nspace(const struct element *elm,
     return NULL;
 }
 
+const char *ne_xml_resolve_nspace(ne_xml_parser *parser, 
+                                  const char *prefix, size_t length)
+{
+    if (prefix) {
+        return resolve_nspace(parser->current, prefix, length);
+    }
+    else {
+        struct element *e = parser->current;
+
+        while (e->default_ns == NULL)
+            e = e->parent;
+
+        return e->default_ns;
+    }
+}
+
 ne_xml_parser *ne_xml_create(void) 
 {
     ne_xml_parser *p = ne_calloc(sizeof *p);
@@ -443,14 +481,34 @@ ne_xml_parser *ne_xml_create(void)
     XML_SetCharacterDataHandler(p->parser, char_data);
     XML_SetUserData(p->parser, (void *) p);
     XML_SetXmlDeclHandler(p->parser, decl_handler);
+
+    /* Prevent the "billion laughs" attack against expat by disabling
+     * internal entity expansion.  With 2.x, forcibly stop the parser
+     * if an entity is declared - this is safer and a more obvious
+     * failure mode.  With older versions, installing a noop
+     * DefaultHandler means that internal entities will be expanded as
+     * the empty string, which is also sufficient to prevent the
+     * attack. */
+#if XML_MAJOR_VERSION > 1
+    XML_SetEntityDeclHandler(p->parser, entity_declaration);
 #else
+    XML_SetDefaultHandler(p->parser, default_handler);
+#endif
+
+#else /* HAVE_LIBXML */
     p->parser = xmlCreatePushParserCtxt(&sax_handler, 
 					(void *)p, NULL, 0, NULL);
     if (p->parser == NULL) {
 	abort();
     }
+#if LIBXML_VERSION < 20602
     p->parser->replaceEntities = 1;
+#else
+    /* Enable expansion of entities, and disable network access. */
+    xmlCtxtUseOptions(p->parser, XML_PARSE_NOENT | XML_PARSE_NONET);
 #endif
+
+#endif /* HAVE_LIBXML || HAVE_EXPAT */
     return p;
 }
 
@@ -531,7 +589,7 @@ int ne_xml_parse(ne_xml_parser *p, const char *block, size_t len)
     NE_DEBUG(NE_DBG_XMLPARSE, "XML: XML_Parse returned %d\n", ret);
     if (ret == 0 && p->failure == 0) {
 	ne_snprintf(p->error, ERR_SIZE,
-		    "XML parse error at line %d: %s", 
+		    "XML parse error at line %" NE_FMT_XML_SIZE ": %s", 
 		    XML_GetCurrentLineNumber(p->parser),
 		    XML_ErrorString(XML_GetErrorCode(p->parser)));
 	p->failure = 1;
@@ -543,7 +601,7 @@ int ne_xml_parse(ne_xml_parser *p, const char *block, size_t len)
     /* Parse errors are normally caught by the sax_error() callback,
      * which clears p->valid. */
     if (p->parser->errNo && p->failure == 0) {
-	ne_snprintf(p->error, ERR_SIZE, "XML parse error at line %d.", 
+	ne_snprintf(p->error, ERR_SIZE, "XML parse error at line %d", 
 		    ne_xml_currentline(p));
 	p->failure = 1;
         NE_DEBUG(NE_DBG_XMLPARSE, "XML: Parse error: %s\n", p->error);
@@ -606,7 +664,7 @@ static void sax_error(void *ctx, const char *msg, ...)
 
     if (p->failure == 0) {
         ne_snprintf(p->error, ERR_SIZE, 
-                    _("XML parse error at line %d: %s."),
+                    _("XML parse error at line %d: %s"),
                     p->parser->input->line, buf);
         p->failure = 1;
     }

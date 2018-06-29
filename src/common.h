@@ -75,20 +75,6 @@ int upload_foo(const char *path);
 /* Returns etag of resource at path within i_session */
 char *get_etag(const char *path);
 
-/*Returns the last modified of resource at path*/
-char *get_lastmodified(const char *path);
-
-char *create_temp(const char *contents);
-
-int compare_contents(const char *fn, const char *contents);
-/* BINARYMODE() enables binary file I/O on cygwin. */
-#ifdef __CYGWIN__
-#define BINARYMODE(fd) do { setmode(fd, O_BINARY); } while (0)
-#else
-#define BINARYMODE(fd) if (0)
-#endif
-
-
 /* for method 'method' on 'uri', do operation 'x'. */
 #define ONMREQ(method, uri, x) do { int _ret = (x); if (_ret) { t_context("%s on `%s': %s", method, uri, ne_get_error(i_session)); return FAIL; } } while (0)
 
@@ -109,5 +95,9 @@ int compare_contents(const char *fn, const char *contents);
 
 #define GETSTATUS2 (atoi(ne_get_error((i_session2))))
 #define STATUS2(code) (GETSTATUS2 != (code))
+
+#if NE_VERSION_MAJOR > 0 || NE_VERSION_MINOR > 25
+#define HAVE_NEON_026PLUS /* at least neon 0.26.x. */
+#endif
 
 #endif /* INTEROP_H */

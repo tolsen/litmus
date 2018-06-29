@@ -24,31 +24,15 @@
 
 #include <sys/types.h>
 
-#if STDC_HEADERS || defined _LIBC
-# include <stdlib.h>
-# include <string.h>
-#else
-#ifdef HAVE_STRING_H
+#include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_LIMITS_H
+# include <limits.h>
 #endif
-# ifndef HAVE_MEMCPY
-#  define memcpy(d, s, n) bcopy ((s), (d), (n))
-# endif
-#endif
-
-#include <ctype.h> /* for tolower */
 
 #include "ne_md5.h"
 #include "ne_string.h" /* for NE_ASC2HEX */
 
-#ifdef _LIBC
-# include <endian.h>
-# if __BYTE_ORDER == __BIG_ENDIAN
-#  define WORDS_BIGENDIAN 1
-# endif
-#endif
-
-#define md5_init_ctx ne_md5_init_ctx
 #define md5_process_block ne_md5_process_block
 #define md5_process_bytes ne_md5_process_bytes
 #define md5_finish_ctx ne_md5_finish_ctx
@@ -63,6 +47,26 @@
 # define SWAP(n) (n)
 #endif
 
+#if SIZEOF_INT == 4
+typedef unsigned int md5_uint32;
+#elif SIZEOF_LONG == 4
+typedef unsigned long md5_uint32;
+#else
+# error "Cannot determine unsigned 32-bit data type."
+#endif
+
+/* Structure to save state of computation between the single steps.  */
+struct md5_ctx
+{
+  md5_uint32 A;
+  md5_uint32 B;
+  md5_uint32 C;
+  md5_uint32 D;
+
+  md5_uint32 total[2];
+  md5_uint32 buflen;
+  char buffer[128];
+};
 
 /* This array contains the bytes used to pad the buffer to the next
    64-byte boundary.  (RFC 1321, 3.1: Step 1)  */
@@ -71,9 +75,8 @@ static const unsigned char fillbuf[64] = { 0x80, 0 /* , 0, 0, ...  */ };
 
 /* Initialize structure containing state of computation.
    (RFC 1321, 3.3: Step 3)  */
-void
-md5_init_ctx (ctx)
-     struct md5_ctx *ctx;
+static void 
+md5_init_ctx (struct md5_ctx *ctx)
 {
   ctx->A = 0x67452301;
   ctx->B = 0xefcdab89;
@@ -84,15 +87,39 @@ md5_init_ctx (ctx)
   ctx->buflen = 0;
 }
 
+struct ne_md5_ctx *
+ne_md5_create_ctx(void)
+{
+  struct md5_ctx *ctx = ne_malloc(sizeof *ctx);
+  md5_init_ctx(ctx);
+  return ctx;
+}
+
+extern void 
+ne_md5_reset_ctx(struct ne_md5_ctx *ctx)
+{
+  md5_init_ctx(ctx);
+}
+
+struct ne_md5_ctx *
+ne_md5_dup_ctx(struct ne_md5_ctx *ctx)
+{
+  return memcpy(ne_malloc(sizeof *ctx), ctx, sizeof *ctx);
+}
+
+void
+ne_md5_destroy_ctx(struct ne_md5_ctx *ctx)
+{
+  ne_free(ctx);
+}
+
 /* Put result from CTX in first 16 bytes following RESBUF.  The result
    must be in little endian byte order.
 
    IMPORTANT: On some systems it is required that RESBUF is correctly
    aligned for a 32 bits value.  */
 void *
-md5_read_ctx (ctx, resbuf)
-     const struct md5_ctx *ctx;
-     void *resbuf;
+md5_read_ctx (const struct md5_ctx *ctx, void *resbuf)
 {
   ((md5_uint32 *) resbuf)[0] = SWAP (ctx->A);
   ((md5_uint32 *) resbuf)[1] = SWAP (ctx->B);
@@ -108,9 +135,7 @@ md5_read_ctx (ctx, resbuf)
    IMPORTANT: On some systems it is required that RESBUF is correctly
    aligned for a 32 bits value.  */
 void *
-md5_finish_ctx (ctx, resbuf)
-     struct md5_ctx *ctx;
-     void *resbuf;
+md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
 {
   /* Take yet unprocessed bytes into account.  */
   md5_uint32 bytes = ctx->buflen;
@@ -139,9 +164,7 @@ md5_finish_ctx (ctx, resbuf)
    resulting message digest number will be written into the 16 bytes
    beginning at RESBLOCK.  */
 int
-md5_stream (stream, resblock)
-     FILE *stream;
-     void *resblock;
+md5_stream (FILE *stream, void *resblock)
 {
   /* Important: BLOCKSIZE must be a multiple of 64.  */
 #define BLOCKSIZE 4096
@@ -192,10 +215,7 @@ md5_stream (stream, resblock)
 }
 
 void
-md5_process_bytes (buffer, len, ctx)
-     const void *buffer;
-     size_t len;
-     struct md5_ctx *ctx;
+md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
 {
   /* When we already have some bits in our internal buffer concatenate
      both inputs first.  */
@@ -250,10 +270,7 @@ md5_process_bytes (buffer, len, ctx)
    It is assumed that LEN % 64 == 0.  */
 
 void
-md5_process_block (buffer, len, ctx)
-     const void *buffer;
-     size_t len;
-     struct md5_ctx *ctx;
+md5_process_block (const void *buffer, size_t len, struct md5_ctx *ctx)
 {
   md5_uint32 correct_words[16];
   const unsigned char *words = buffer;
@@ -430,3 +447,14 @@ void ne_ascii_to_md5(const char *buffer, unsigned char md5_buf[16])
 	    NE_ASC2HEX(buffer[count*2+1]);
     }
 }
+
+char *ne_md5_finish_ascii(struct ne_md5_ctx *ctx, char buffer[33])
+{
+    md5_uint32 result[4];
+
+    ne_md5_finish_ctx(ctx, (void *)result);
+    ne_md5_to_ascii((void *)result, buffer);
+
+    return buffer;
+}
+

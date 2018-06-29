@@ -1,6 +1,6 @@
 /* 
    WebDAV Properties manipulation
-   Copyright (C) 1999-2004, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 1999-2006, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -25,7 +25,7 @@
 #include "ne_request.h"
 #include "ne_207.h"
 
-BEGIN_NEON_DECLS
+NE_BEGIN_DECLS
 
 /* There are two interfaces for fetching properties. The first is
  * 'ne_simple_propfind', which is relatively simple, and easy to use,
@@ -48,7 +48,7 @@ BEGIN_NEON_DECLS
  * For each resource found, the results callback is called, passing
  * you two things along with the userdata you passed in originally:
  *
- *   - the URI of the resource (const char *href)
+ *   - the URI of the resource (const ne_uri *uri)
  *   - the properties results set (const ne_prop_result_set *results)
  * */
 
@@ -102,10 +102,11 @@ int ne_propset_iterate(const ne_prop_result_set *set,
 			ne_propset_iterator iterator, void *userdata);
 
 /* Callback for handling the results of fetching properties for a
- * single resource (named by 'href').  The results are stored in the
- * result set 'results': use ne_propset_* to examine this object.  */
-typedef void (*ne_props_result)(void *userdata, const char *href,
-				 const ne_prop_result_set *results);
+ * single resource (identified by URI 'uri').  The results are stored
+ * in the result set 'results': use ne_propset_* to examine this
+ * object.  */
+typedef void (*ne_props_result)(void *userdata, const ne_uri *uri,
+                                const ne_prop_result_set *results);
 
 /* Fetch properties for a resource (if depth == NE_DEPTH_ZERO),
  * or a tree of resources (if depth == NE_DEPTH_ONE or _INFINITE).
@@ -126,9 +127,6 @@ typedef void (*ne_props_result)(void *userdata, const char *href,
 int ne_simple_propfind(ne_session *sess, const char *path, int depth,
 			const ne_propname *props,
 			ne_props_result results, void *userdata);
-int ne_simple_report(ne_session *sess, const char *path, int depth,
-			const ne_propname *props,
-			ne_props_result results, void *userdata);
 
 /* The properties of a resource can be manipulated using ne_proppatch.
  * A single proppatch request may include any number of individual
@@ -136,13 +134,6 @@ int ne_simple_report(ne_session *sess, const char *path, int depth,
  * "all-or-nothing" semantics, so either all the operations succeed,
  * or none do. */
 
-/*
-this is to set the method PROPFIND or PROPPATCH.
-*/
-enum ne_prop_method {
-    ne_propfind_method,
-    ne_proppatch_method
-};
 /* A proppatch operation may either set a property to have a new
  * value, in which case 'type' must be ne_propset, and 'value' must be
  * non-NULL; or it can remove a property; in which case 'type' must be
@@ -188,16 +179,7 @@ void *ne_propfind_current_private(ne_propfind_handler *handler);
  *
  * Depth must be one of NE_DEPTH_*. */
 ne_propfind_handler *
-ne_propfind_create(ne_session *sess, const char *path, int depth, char *method);
-ne_propfind_handler *
-ne_report_create(ne_session *sess, const char *path, int depth);
-
-/*Create a PROPFIND handler, Empty PROPFIND body
-*Depth must be one of NE_DEPTH_*.
-*/
-ne_propfind_handler *
-ne_propfind_create_empty(ne_session *sess, const char *uri, int depth);
-
+ne_propfind_create(ne_session *sess, const char *path, int depth);
 
 /* Return the XML parser for the given handler (only need if you want
  * to handle complex properties). */
@@ -224,7 +206,9 @@ ne_request *ne_propfind_get_request(ne_propfind_handler *handler);
  * allocated in each propset (i.e. one per resource). When parsing the
  * property value elements, for each new resource encountered in the
  * response, the 'creator' callback is called to retrieve a 'private'
- * structure for this resource.
+ * structure for this resource.  When the private structure is no longer
+ * needed, the 'destructor' callback is called to deallocate any 
+ * memory, if necessary.
  *
  * Whilst in XML element callbacks you will have registered to handle
  * complex properties, you can use the 'ne_propfind_current_private'
@@ -233,11 +217,12 @@ ne_request *ne_propfind_get_request(ne_propfind_handler *handler);
  * To retrieve this 'private' structure from the propset in the
  * results callback, simply call 'ne_propset_private'.
  * */
-typedef void *(*ne_props_create_complex)(void *userdata,
-					 const char *href);
+typedef void *(*ne_props_create_complex)(void *userdata, const ne_uri *uri);
+typedef void (*ne_props_destroy_complex)(void *userdata, void *complex);
 
 void ne_propfind_set_private(ne_propfind_handler *handler,
 			     ne_props_create_complex creator,
+			     ne_props_destroy_complex destructor,
 			     void *userdata);
 
 /* Fetch all properties.
@@ -245,9 +230,6 @@ void ne_propfind_set_private(ne_propfind_handler *handler,
  * Returns NE_*. */
 int ne_propfind_allprop(ne_propfind_handler *handler, 
 			ne_props_result result, void *userdata);
-int ne_reportfind_allprop(ne_propfind_handler *handler, 
-			ne_props_result result, void *userdata);
-
 
 /* Fetch all properties with names listed in array 'names', which is
  * terminated by a property with a NULL name field.  For each resource
@@ -258,27 +240,10 @@ int ne_reportfind_allprop(ne_propfind_handler *handler,
 int ne_propfind_named(ne_propfind_handler *handler, 
 		      const ne_propname *names,
 		      ne_props_result result, void *userdata);
-int ne_reportfind_named(ne_propfind_handler *handler, 
-		      const ne_propname *names,
-		      ne_props_result result, void *userdata);
-
-/* propfind with an xml body supplied by the caller.
-* xmlbody should be a valid xml else you will get a 400 - Bad request response.
-* pass a NULL xmlbody for an empty body, takes care for the xml header
-* and propfind element so don't include it
-* method takes "PROPFIND" or "PROPPATCH" as arguments only
-* result callback will be invoked passing the userdata as the first arg.
-* Returns NE_*.
-*/
-int ne_propfind(ne_propfind_handler *handler, const char *xmlbody,
-		      ne_props_result results, void *userdata, enum ne_prop_method method);
 
 /* Destroy a propfind handler after use. */
 void ne_propfind_destroy(ne_propfind_handler *handler);
 
-//for an empty propfind body
-int ne_propfind_empty(ne_propfind_handler *handler, ne_props_result results, void *userdata);
-
-END_NEON_DECLS
+NE_END_DECLS
 
 #endif /* NE_PROPS_H */

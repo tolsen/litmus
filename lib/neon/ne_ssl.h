@@ -1,6 +1,6 @@
 /* 
    SSL/TLS abstraction layer for neon
-   Copyright (C) 2003-2005, Joe Orton <joe@manyfish.co.uk>
+   Copyright (C) 2003-2006, 2009, Joe Orton <joe@manyfish.co.uk>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -25,9 +25,11 @@
 #ifndef NE_SSL_H
 #define NE_SSL_H 1
 
+#include <sys/types.h>
+
 #include "ne_defs.h"
 
-BEGIN_NEON_DECLS
+NE_BEGIN_DECLS
 
 /* A "distinguished name"; a unique name for some entity. */
 typedef struct ne_ssl_dname_s ne_ssl_dname;
@@ -65,12 +67,15 @@ ne_ssl_certificate *ne_ssl_cert_import(const char *data);
 
 /* Returns the identity of the certificate, or NULL if none is given.
  * For a server certificate this will be the hostname of the server to
- * whom the cert was issued.  String returned is UTF-8-encoded. */
+ * which the cert was issued.  A NUL-terminated UTF-8-encoded string
+ * is returned, which is valid for the lifetime of the certificate
+ * object. */
 const char *ne_ssl_cert_identity(const ne_ssl_certificate *cert);
 
 /* Return the certificate of the entity which signed certificate
  * 'cert'.  Returns NULL if 'cert' is self-signed or the issuer
- * certificate is not available. */
+ * certificate is not available; if non-NULL, the pointer is valid for
+ * the lifetime of the certificate object. */
 const ne_ssl_certificate *ne_ssl_cert_signedby(const ne_ssl_certificate *cert);
 
 /* Returns the distinguished name of the certificate issuer. */
@@ -88,11 +93,18 @@ const ne_ssl_dname *ne_ssl_cert_subject(const ne_ssl_certificate *cert);
  * NE_SSL_DIGESTLEN bytes in length. */
 int ne_ssl_cert_digest(const ne_ssl_certificate *cert, char *digest);
 
-#define NE_SSL_VDATELEN (30)
+/* Copy the validity times for the certificate 'cert' into 'from' and
+ * 'until' (either may be NULL).  If the time cannot be represented by
+ * a time_t value, then (time_t)-1 will be written. */
+void ne_ssl_cert_validity_time(const ne_ssl_certificate *cert,
+                               time_t *from, time_t *until);
 
-/* Copy the validity dates into buffers 'from' and 'until' as
- * NUL-terminated human-readable strings.  The buffers must be at
- * least NE_SSL_VDATELEN bytes in length. */
+#define NE_SSL_VDATELEN (30)
+/* Copy the validity times into buffers 'from' and 'until' as
+ * NUL-terminated human-readable strings, using RFC 1123-style date
+ * formatting (and not localized, so always using English month/week
+ * names).  The buffers must be at least NE_SSL_VDATELEN bytes in
+ * length, and either may be NULL. */
 void ne_ssl_cert_validity(const ne_ssl_certificate *cert,
                           char *from, char *until);
 
@@ -104,33 +116,40 @@ int ne_ssl_cert_cmp(const ne_ssl_certificate *c1,
 /* Deallocate memory associated with certificate. */
 void ne_ssl_cert_free(ne_ssl_certificate *cert);
 
-/* A client certificate (and private key). */
+/* A client certificate (and private key).  A client certificate
+ * object has state; the object is either in the "encrypted" or
+ * "decrypted" state.  */
 typedef struct ne_ssl_client_cert_s ne_ssl_client_cert;
 
 /* Read a client certificate and private key from a PKCS12 file;
- * returns NULL if the file could not be parsed.  If the client cert
- * is encrypted, it must be decrypted before use. */
+ * returns NULL if the file could not be parsed, or otherwise
+ * returning a client certificate object.  The returned object may be
+ * in either the encrypted or decrypted state. */
 ne_ssl_client_cert *ne_ssl_clicert_read(const char *filename);
 
-/* Returns the "friendly name" given for the client cert, or NULL if
- * none given.  This can be called before or after the client cert has
- * been decrypted.  Returns a NUL-terminated, UTF-8-encoded string. */
-const char *ne_ssl_clicert_name(const ne_ssl_client_cert *ccert);
-
-/* Returns non-zero if client cert is encrypted. */
+/* Returns non-zero if client cert is in the encrypted state. */
 int ne_ssl_clicert_encrypted(const ne_ssl_client_cert *ccert);
 
-/* Decrypt the encrypted client cert using given password.  Returns
- * non-zero on failure, in which case, the function can be called
- * again with a different password.  For a ccert on which _encrypted()
- * returns 0, calling _decrypt results in undefined behaviour. */
+/* Returns the "friendly name" given for the client cert, or NULL if
+ * none given.  Returns a NUL-terminated, UTF-8-encoded string.  This
+ * function may be used on a ccert object in either encrypted or
+ * decrypted state. */
+const char *ne_ssl_clicert_name(const ne_ssl_client_cert *ccert);
+
+/* Decrypt the encrypted client cert using the given password.
+ * Returns non-zero on failure, in which case, the ccert object
+ * remains in the encrypted state and the function may be called again
+ * with a different password.  This function has undefined behaviour
+ * for a ccert object which is in the decrypted state. */
 int ne_ssl_clicert_decrypt(ne_ssl_client_cert *ccert, const char *password);
 
 /* Return the actual certificate part of the client certificate (never
- * returns NULL). */
+ * returns NULL).  This function has undefined behaviour for a ccert
+ * object which is in the encrypted state. */
 const ne_ssl_certificate *ne_ssl_clicert_owner(const ne_ssl_client_cert *ccert);
 
-/* Deallocate memory associated with a client certificate. */
+/* Destroy a client certificate object.  This function may be used on
+ * a ccert object in either the encrypted or decrypted state. */
 void ne_ssl_clicert_free(ne_ssl_client_cert *ccert);
 
 
@@ -159,9 +178,13 @@ int ne_ssl_context_keypair(ne_ssl_context *ctx,
 int ne_ssl_context_set_verify(ne_ssl_context *ctx, int required,
                               const char *ca_names, const char *verify_cas);
 
+#define NE_SSL_CTX_SSLv2 (0)
+/* Set a flag for the SSL context. */
+void ne_ssl_context_set_flag(ne_ssl_context *ctx, int flag, int value);
+
 /* Destroy an SSL context. */
 void ne_ssl_context_destroy(ne_ssl_context *ctx);
 
-END_NEON_DECLS
+NE_END_DECLS
 
 #endif
